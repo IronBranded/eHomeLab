@@ -1,0 +1,188 @@
+%%{init: {'theme': 'dark', 'themeVariables': {'primaryColor': '#1a1a2e', 'primaryTextColor': '#e0e0e0', 'primaryBorderColor': '#4a4a8a', 'lineColor': '#6a6aaa', 'secondaryColor': '#16213e', 'tertiaryColor': '#0f3460'}}}%%
+
+flowchart TB
+
+    %% ─────────────────────────────────────────
+    %% EXTERNAL LAYER
+    %% ─────────────────────────────────────────
+    subgraph EXTERNAL["🌐  EXTERNAL / INTERNET"]
+        direction LR
+        INT["Internet\n(controlled egress only)"]
+        WIREGUARD_CLIENT["🔐 Remote Analyst\nWireGuard Client"]
+    end
+
+    %% ─────────────────────────────────────────
+    %% PHYSICAL HOST
+    %% ─────────────────────────────────────────
+    subgraph PROXMOX_HOST["🖥️  PROXMOX VE BARE METAL HOST  |  64–128GB RAM  |  12+ cores  |  8TB"]
+        direction TB
+
+        %% ── PERIMETER ──
+        subgraph PERIMETER["🛡️  Perimeter — OPNsense Firewall VM"]
+            direction LR
+            FW["OPNsense\nFirewall + IDS\n(Suricata plugin)\n\n• VLAN enforcement\n• Egress ACLs\n• IDS/IPS inline\n• WireGuard endpoint\n• Traffic logging → SOF-ELK"]
+        end
+
+        %% ── VLAN 10 — MANAGEMENT ──
+        subgraph VLAN10["🔵  VLAN 10 — Management  |  10.0.10.0/24  |  NO egress"]
+            direction TB
+            GITEA["Gitea\nSelf-hosted Git\n10.0.10.10"]
+            VAULT["HashiCorp Vault\nSecrets Manager\n10.0.10.11"]
+            PROXMOX_UI["Proxmox Web UI\n10.0.10.1"]
+            WIREGUARD_SRV["WireGuard\nVPN Server\n10.0.10.20"]
+        end
+
+        %% ── VLAN 20 — ANALYSIS ──
+        subgraph VLAN20["🟢  VLAN 20 — Analysis  |  10.0.20.0/24  |  Monitored egress"]
+            direction TB
+
+            subgraph DFIR_WS["DFIR Workstations"]
+                direction LR
+                SIFT["SIFT + REMnux\nUbuntu 22.04\n10.0.20.10\n\n• Disk / memory forensics\n• Volatility3, Autopsy\n• Wireshark, NetworkMiner\n• EZ Tools (Wine)"]
+                TSURUGI["Tsurugi Linux\n10.0.20.11\n\n• Live acquisition\n• OSINT framework\n• Mobile triage\n• Metadata extraction"]
+                FLAREVM["Flare-VM\nWindows 10 x64\n10.0.20.12\n\n• x64dbg, OllyDbg\n• Ghidra, dnSpy\n• PEStudio, CyberChef\n• de4dot, DIE"]
+            end
+
+            subgraph HUNT_STACK["Threat Hunting Stack"]
+                direction LR
+                VELOCIRAPTOR["Velociraptor\nServer\n10.0.20.30\n\n• EDR / live response\n• VQL hunt engine\n• Artifact collection\n• Agent deployment"]
+                ZEEK_SURICATA["Zeek + Suricata\nSensor VM\n10.0.20.31\n\n• Full packet capture\n• NSM / IDS\n• PCAP → SOF-ELK\n• Conn logs, DNS, HTTP"]
+            end
+
+            subgraph MS_CLOUD_VM["Cloud Forensics VM (Windows)"]
+                direction LR
+                MS_TOOLS["Microsoft Extractor Suite\nMicrosoft Analyzer Suite\nROADtools / Hawk\n10.0.20.40\n\n• M365 UAL extraction\n• Azure / Entra ID logs\n• MFA / sign-in logs\n• Service principal audit"]
+            end
+
+            subgraph ANDROID_VM["Android Forensics VM"]
+                direction LR
+                ANDROID_TOOLS["ALEAPP\nMVT\nAndriller CE\n10.0.20.50\n\n• Android artifact parsing\n• Spyware / stalkerware\n• APK + DB forensics\n• Protobuf decoding"]
+            end
+
+            subgraph CRYPTO_VM["Crypto Tracing VM"]
+                direction LR
+                CRYPTO_TOOLS["GraphSense\nBlockSci\nSpiderFoot\n10.0.20.60\n\n• BTC/ETH/LTC tracing\n• Wallet clustering\n• OSINT pivots\n• Exchange attribution"]
+            end
+        end
+
+        %% ── VLAN 30 — DETONATION (AIR-GAPPED) ──
+        subgraph VLAN30["🔴  VLAN 30 — Detonation  |  10.0.30.0/24  |  AIR-GAPPED — no routing to other VLANs"]
+            direction TB
+
+            subgraph MALWARE_LAB["Malware Analysis Lab"]
+                direction LR
+                CAPE["CAPE Sandbox\nUbuntu 20.04\n10.0.30.10\n\n• Dynamic detonation\n• Behavioral reports\n• Config extraction\n• YARA post-analysis"]
+                INETSIM["INetSim\nDebian\n10.0.30.11\n\n• Fake DNS / HTTP / SMTP\n• Simulated internet\n• C2 traffic capture\n• No real internet access"]
+                WIN_DETONATION["Windows 10\nDetonation VM\n10.0.30.12\n\n• CAPE agent installed\n• Reverted via snapshot\n• No persistent state\n• Monitored by CAPE"]
+            end
+        end
+
+        %% ── VLAN 40 — CLOUD / INTEL ──
+        subgraph VLAN40["🟡  VLAN 40 — Cloud & Intel  |  10.0.40.0/24  |  Egress controlled (allowlist)"]
+            direction TB
+
+            subgraph INTEL_STACK["Threat Intelligence Stack"]
+                direction LR
+                MISP["MISP\n10.0.40.10\n\n• IOC platform\n• Feed ingestion\n• Event correlation\n• MITRE ATT&CK mapping"]
+                OPENCTI["OpenCTI\n10.0.40.11\n\n• STIX2 / TAXII\n• Threat actor profiles\n• Campaign tracking\n• Graph relationships"]
+            end
+
+            subgraph CASE_MGMT["Case Management & Orchestration"]
+                direction LR
+                THEHIVE["TheHive 4\n10.0.40.20\n\n• IR case management\n• Chain of custody\n• Alert ingestion\n• Analyst tasking"]
+                CORTEX["Cortex\n10.0.40.21\n\n• Observable enrichment\n• Analyzer automation\n• Responder triggers\n• API integrations"]
+                SHUFFLE["Shuffle SOAR\n10.0.40.22\n\n• Workflow automation\n• Alert → case pipelines\n• IOC enrichment flows\n• Velociraptor hooks"]
+            end
+        end
+
+        %% ── VLAN 50 — LOGGING ──
+        subgraph VLAN50["🟣  VLAN 50 — Logging & Analytics  |  10.0.50.0/24  |  Receive-only from all VLANs"]
+            direction LR
+            SOFELK["SOF-ELK\nElastic Stack\n10.0.50.10\n\n• Centralized log aggregation\n• DFIR-tuned dashboards\n• Sigma rule detection\n• Windows / Linux / network\n• Velociraptor telemetry\n• CAPE behavioral logs\n• Access audit trail"]
+        end
+
+        %% ── VLAN 60 — EVIDENCE NAS ──
+        subgraph VLAN60["⚪  VLAN 60 — Evidence NAS  |  10.0.60.0/24  |  Read-only mounts to VLAN 20"]
+            direction LR
+            ZFS_NAS["ZFS Evidence NAS\n10.0.60.10\n\n• RAID-Z1 (8TB+)\n• Immutable snapshots\n• SHA-256 + MD5 manifest\n• Read-only NFS to VLAN 20\n• Write-once acquisition mount\n• Encrypted at rest (AES-256)\n• Access logged to SOF-ELK"]
+        end
+
+    end
+
+    %% ─────────────────────────────────────────
+    %% TRAFFIC FLOW CONNECTIONS
+    %% ─────────────────────────────────────────
+
+    %% External → Perimeter
+    INT -- "HTTPS (allowlist only)" --> FW
+    WIREGUARD_CLIENT -- "WireGuard UDP 51820" --> FW
+
+    %% Perimeter → VLANs
+    FW -- "Mgmt traffic\n(SSH, Proxmox API)" --> VLAN10
+    FW -- "Analyst sessions\n(WireGuard tunnel)" --> VLAN20
+    FW -- "Intel feeds\n(allowlisted IPs)" --> VLAN40
+    FW -- "Log forwarding\n(Syslog/Beats)" --> VLAN50
+
+    %% VLAN 30 is HARD isolated — no FW path shown (intentional)
+
+    %% Management → All VLANs (admin only)
+    WIREGUARD_SRV -- "Admin tunnel\n(all VLANs)" --> VLAN20
+    VAULT -- "Secrets injection\n(API)" --> VLAN20
+    VAULT -- "Secrets injection\n(API)" --> VLAN40
+
+    %% Analysis → Logging
+    SIFT -- "Syslog / Winlogbeat" --> SOFELK
+    TSURUGI -- "Syslog" --> SOFELK
+    FLAREVM -- "Winlogbeat" --> SOFELK
+    VELOCIRAPTOR -- "Hunt results / telemetry" --> SOFELK
+    ZEEK_SURICATA -- "Conn logs / alerts / PCAP metadata" --> SOFELK
+    MS_TOOLS -- "Audit logs" --> SOFELK
+    CAPE -- "Behavioral reports" --> SOFELK
+
+    %% Analysis → Evidence NAS
+    SIFT -- "Read-only NFS\n(evidence access)" --> ZFS_NAS
+    TSURUGI -- "Read-only NFS" --> ZFS_NAS
+    FLAREVM -- "Read-only NFS" --> ZFS_NAS
+    MS_TOOLS -- "Read-only NFS" --> ZFS_NAS
+    ANDROID_TOOLS -- "Read-only NFS" --> ZFS_NAS
+
+    %% Detonation is isolated — only CAPE feeds logs out (one-way)
+    CAPE -- "Reports (one-way push)\nover isolated bridge" --> SOFELK
+    INETSIM -- "C2 captures\n(manual export only)" --> ZFS_NAS
+
+    %% Intel & Case Mgmt flows
+    VELOCIRAPTOR -- "Alerts → TheHive" --> THEHIVE
+    ZEEK_SURICATA -- "IDS alerts → TheHive" --> THEHIVE
+    THEHIVE -- "Observable enrichment" --> CORTEX
+    CORTEX -- "Enrichment results" --> THEHIVE
+    THEHIVE -- "IOC export" --> MISP
+    MISP -- "Threat feeds" --> OPENCTI
+    OPENCTI -- "STIX indicators" --> MISP
+    SHUFFLE -- "Orchestration" --> THEHIVE
+    SHUFFLE -- "Orchestration" --> VELOCIRAPTOR
+    SHUFFLE -- "Enrichment triggers" --> CORTEX
+
+    %% Crypto flows
+    CRYPTO_TOOLS -- "Syslog" --> SOFELK
+    CRYPTO_TOOLS -- "Artifacts" --> ZFS_NAS
+
+    %% ─────────────────────────────────────────
+    %% STYLES
+    %% ─────────────────────────────────────────
+    classDef external fill:#2d1b00,stroke:#ff8800,stroke-width:2px,color:#ffcc88
+    classDef firewall fill:#1a0a2e,stroke:#cc44ff,stroke-width:3px,color:#dd88ff
+    classDef mgmt fill:#0a1628,stroke:#4488ff,stroke-width:2px,color:#88bbff
+    classDef analysis fill:#0a2814,stroke:#44cc44,stroke-width:2px,color:#88ff88
+    classDef detonation fill:#2a0a0a,stroke:#ff4444,stroke-width:3px,color:#ff8888
+    classDef intel fill:#1a1a00,stroke:#cccc00,stroke-width:2px,color:#ffff88
+    classDef logging fill:#1a0a28,stroke:#aa44ff,stroke-width:2px,color:#cc88ff
+    classDef evidence fill:#1a1a1a,stroke:#aaaaaa,stroke-width:2px,color:#dddddd
+
+    class INT,WIREGUARD_CLIENT external
+    class FW firewall
+    class GITEA,VAULT,PROXMOX_UI,WIREGUARD_SRV mgmt
+    class SIFT,TSURUGI,FLAREVM,VELOCIRAPTOR,ZEEK_SURICATA,MS_TOOLS,ANDROID_TOOLS,CRYPTO_TOOLS analysis
+    class CAPE,INETSIM,WIN_DETONATION detonation
+    class MISP,OPENCTI,THEHIVE,CORTEX,SHUFFLE intel
+    class SOFELK logging
+    class ZFS_NAS evidence
