@@ -1,0 +1,51 @@
+---
+# =============================================================================
+# group_vars/all.yml — Variables applied to ALL hosts
+# Sensitive values are prefixed with vault_ and stored in
+# ansible/vault/secrets.yml (encrypted with ansible-vault)
+# =============================================================================
+
+# ── Lab identity ──────────────────────────────────────────────────────────────
+lab_name: "ECrime Homelab"
+lab_domain: "ecrime.lab"
+lab_timezone: "UTC"   # ALWAYS UTC — forensic standard
+
+# ── Infrastructure IPs ────────────────────────────────────────────────────────
+sofelk_ip: "10.0.50.10"
+sofelk_syslog_port: 5514
+sofelk_beats_port: 5044
+
+nas_ip: "10.0.60.10"
+velociraptor_ip: "10.0.20.30"
+thehive_ip: "10.0.40.20"
+cortex_ip: "10.0.40.21"
+misp_ip: "10.0.40.10"
+opencti_ip: "10.0.40.11"
+
+# ── SSH hardening defaults ────────────────────────────────────────────────────
+ssh_port: 22
+ssh_allowed_users: "analyst ansible"
+ssh_max_auth_tries: 3
+ssh_client_alive_interval: 300
+ssh_client_alive_count_max: 2
+
+# ── NTP ───────────────────────────────────────────────────────────────────────
+chrony_ntp_servers:
+  - "0.pool.ntp.org"
+  - "1.pool.ntp.org"
+  - "2.pool.ntp.org"
+
+# ── Fail2ban defaults ─────────────────────────────────────────────────────────
+fail2ban_bantime: 3600
+fail2ban_findtime: 600
+fail2ban_maxretry: 3
+
+# ── Vault references (values stored in ansible/vault/secrets.yml) ─────────────
+velociraptor_admin_password:  "{{ vault_velociraptor_admin_password }}"
+thehive_admin_password:       "{{ vault_thehive_admin_password }}"
+cortex_admin_password:        "{{ vault_cortex_admin_password }}"
+misp_admin_password:          "{{ vault_misp_admin_password }}"
+misp_admin_key:               "{{ vault_misp_admin_key }}"
+cape_db_password:             "{{ vault_cape_db_password }}"
+opencti_admin_password:       "{{ vault_opencti_admin_password }}"
+opencti_token:                "{{ vault_opencti_token }}"

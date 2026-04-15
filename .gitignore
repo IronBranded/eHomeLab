@@ -1,0 +1,43 @@
+# =============================================================================
+# .gitignore — ECrime Homelab
+# =============================================================================
+
+# ── CRITICAL — NEVER commit these ────────────────────────────────────────────
+ansible/inventory.ini          # Contains real IPs — use inventory.ini.tmpl
+ansible/group_vars/vault.yml   # Contains secrets — use vault.yml.tmpl
+ansible/ansible.log            # Runtime logs
+*.retry                        # Ansible retry files
+.vault_pass                    # Vault password file
+*.pem                          # Private keys
+*.key                          # Private keys
+id_rsa*                        # SSH keys
+id_ed25519*                    # SSH keys
+*.p12                          # Certificates with private keys
+
+# ── WireGuard keys ────────────────────────────────────────────────────────────
+infrastructure/network/wireguard/*.conf
+infrastructure/network/wireguard/keys/
+
+# ── Terraform state ───────────────────────────────────────────────────────────
+infrastructure/proxmox/terraform/.terraform/
+infrastructure/proxmox/terraform/*.tfstate
+infrastructure/proxmox/terraform/*.tfstate.backup
+infrastructure/proxmox/terraform/*.tfvars        # Use *.tfvars.tmpl
+infrastructure/proxmox/terraform/.terraform.lock.hcl
+
+# ── OS / Editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+__pycache__/
+*.pyc
+*.pyo
+
+# ── Logs and temp ─────────────────────────────────────────────────────────────
+*.log
+tmp/
+.tmp/

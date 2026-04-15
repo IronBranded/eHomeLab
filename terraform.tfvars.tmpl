@@ -1,0 +1,45 @@
+# =============================================================================
+# ECrime Homelab — Terraform Variable Values Template
+# =============================================================================
+# Copy this file:  cp terraform.tfvars.tmpl terraform.tfvars
+# Fill in all values below, then: terraform plan
+# NEVER commit terraform.tfvars — it is in .gitignore
+# =============================================================================
+
+# ── Proxmox connection ────────────────────────────────────────────────────────
+# Create an API token in Proxmox: Datacenter → Permissions → API Tokens
+# Role required: PVEVMAdmin + PVEDatastoreAdmin + PVENetworkAdmin
+proxmox_api_url          = "https://10.0.10.1:8006/api2/json"
+proxmox_api_token_id     = "terraform@pam!ecrime"
+proxmox_api_token_secret = "REPLACE_WITH_TOKEN_SECRET_UUID"
+proxmox_node             = "pve"
+proxmox_tls_insecure     = true
+
+# ── Templates ─────────────────────────────────────────────────────────────────
+# See docs/setup-guide.md — "Preparing Cloud-Init Templates" section
+# Build with: scripts/build-templates.sh
+ubuntu_template      = "ubuntu-2204-cloudinit-template"
+ubuntu2004_template  = "ubuntu-2004-cloudinit-template"
+debian_template      = "debian-12-cloudinit-template"
+sofelk_template      = "sof-elk-template"
+
+# ── Storage ───────────────────────────────────────────────────────────────────
+# List pools with: pvesm status
+vm_storage_pool  = "local-lvm"      # Fast NVMe pool for OS/active VM disks
+nas_storage_pool = "local-hdd"      # Bulk HDD pool for NAS data disks
+iso_storage      = "local"          # Where you uploaded ISO files
+
+# ── SSH ───────────────────────────────────────────────────────────────────────
+# Generate with: ssh-keygen -t ed25519 -C "ecrime-homelab" -f ~/.ssh/ecrime_homelab_ed25519
+ssh_public_key = "ssh-ed25519 REPLACE_WITH_YOUR_PUBLIC_KEY ecrime-homelab"
+
+# ── Networking ────────────────────────────────────────────────────────────────
+# These match the OPNsense VLAN gateway IPs — change only if you deviated from
+# the default VLAN addressing in infrastructure/network/vlans.md
+dns_server  = "10.0.10.1"
+gw_vlan10   = "10.0.10.1"
+gw_vlan20   = "10.0.20.1"
+gw_vlan30   = "10.0.30.1"
+gw_vlan40   = "10.0.40.1"
+gw_vlan50   = "10.0.50.1"
+gw_vlan60   = "10.0.60.1"

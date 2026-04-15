@@ -1,0 +1,58 @@
+---
+# =============================================================================
+# group_vars/vault.yml — ALL secrets live here
+# =============================================================================
+# ENCRYPT THIS FILE:
+#   ansible-vault encrypt group_vars/vault.yml
+#
+# EDIT ENCRYPTED:
+#   ansible-vault edit group_vars/vault.yml
+#
+# USE IN PLAYBOOKS:
+#   ansible-playbook site.yml --ask-vault-pass
+#   ansible-playbook site.yml --vault-password-file ~/.vault_pass
+#
+# NEVER commit this file unencrypted.
+# vault.yml is in .gitignore — double-check before every commit.
+# =============================================================================
+
+# ── ZFS Evidence NAS ──────────────────────────────────────────────────────────
+vault_zfs_passphrase: "CHANGEME_strong_passphrase_here"
+
+# ── Velociraptor ──────────────────────────────────────────────────────────────
+vault_velociraptor_admin_password: "CHANGEME_velociraptor_admin_pass"
+
+# ── CAPE Sandbox ──────────────────────────────────────────────────────────────
+vault_cape_db_password: "CHANGEME_cape_db_pass"
+
+# ── TheHive 4 ─────────────────────────────────────────────────────────────────
+vault_thehive_secret_key: "CHANGEME_64char_random_secret"
+vault_thehive_admin_password: "CHANGEME_thehive_admin_pass"
+
+# ── Cortex ────────────────────────────────────────────────────────────────────
+vault_cortex_secret_key: "CHANGEME_64char_random_secret"
+vault_cortex_admin_password: "CHANGEME_cortex_admin_pass"
+
+# ── MISP ─────────────────────────────────────────────────────────────────────
+vault_misp_admin_key: "CHANGEME_misp_api_key"
+vault_misp_admin_password: "CHANGEME_misp_admin_pass"
+vault_misp_db_password: "CHANGEME_misp_db_pass"
+
+# ── OpenCTI ──────────────────────────────────────────────────────────────────
+vault_opencti_admin_password: "CHANGEME_opencti_admin_pass"
+vault_opencti_admin_token: "CHANGEME_uuid_format_token"
+vault_opencti_minio_secret: "CHANGEME_minio_secret_key"
+vault_opencti_rabbitmq_password: "CHANGEME_rabbitmq_pass"
+
+# ── HashiCorp Vault ───────────────────────────────────────────────────────────
+vault_hashi_root_token: "CHANGEME_vault_root_token"
+vault_hashi_unseal_key: "CHANGEME_vault_unseal_key"
+
+# ── WireGuard ─────────────────────────────────────────────────────────────────
+vault_wireguard_server_private_key: "CHANGEME_wg_server_privkey"
+
+# ── SOF-ELK ──────────────────────────────────────────────────────────────────
+vault_elastic_password: "CHANGEME_elastic_password"
+
+# ── Shuffle SOAR ─────────────────────────────────────────────────────────────
+vault_shuffle_admin_password: "CHANGEME_shuffle_admin_pass"
