@@ -1,0 +1,66 @@
+# =============================================================================
+# Velociraptor Server Configuration
+# Managed by Ansible — only used when velociraptor_use_template: true
+# For auto-generated config, leave velociraptor_use_template: false
+# =============================================================================
+
+version:
+  name: velociraptor
+  version: "{{ velociraptor_version }}"
+
+# ── API (internal gRPC — analyst tools connect here) ─────────────────────────
+API:
+  bind_address: 0.0.0.0
+  bind_port: 8001
+  bind_scheme: https
+
+# ── Frontend (agent connections) ──────────────────────────────────────────────
+Frontend:
+  hostname: "{{ velociraptor_hostname }}"
+  bind_address: 0.0.0.0
+  bind_port: {{ velociraptor_frontend_port }}
+  bind_scheme: https
+  # Agents poll every 60s — adjust for lab vs production
+  max_upload_size: 10485760
+
+# ── GUI ───────────────────────────────────────────────────────────────────────
+GUI:
+  bind_address: 0.0.0.0
+  bind_port: {{ velociraptor_gui_port }}
+  bind_scheme: https
+  # Restrict GUI to management + analysis VLANs via UFW — not here
+  gw_certificate: ""
+  use_plain_http: false
+
+# ── Datastore ─────────────────────────────────────────────────────────────────
+Datastore:
+  implementation: FileBaseDataStore
+  location: {{ velociraptor_datastore }}
+  filestore_directory: {{ velociraptor_datastore }}/files
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+Logging:
+  output_directory: {{ velociraptor_log_dir }}
+  separate_logs_per_component: true
+  rotation_time: 604800     # 7 days
+  max_age: 2592000          # 30 days
+
+# ── Monitoring (Prometheus metrics) ──────────────────────────────────────────
+Monitoring:
+  bind_address: 127.0.0.1
+  bind_port: 8003
+
+# ── Client configuration defaults ────────────────────────────────────────────
+Client:
+  server_urls:
+    - "https://{{ velociraptor_hostname }}:{{ velociraptor_frontend_port }}/"
+  ca_certificate: ""          # Filled in by velociraptor config generate
+  nonce: ""
+  writeback_linux: /etc/velociraptor/client.writeback.yaml
+  writeback_windows: "C:\\Program Files\\Velociraptor\\client.writeback.yaml"
+  tempdir_windows: "C:\\Windows\\Temp"
+  max_poll: 60
+  windows_installer:
+    service_name: Velociraptor
+    install_path: "C:\\Program Files\\Velociraptor\\Velociraptor.exe"
+    service_description: "Velociraptor forensic agent"

@@ -1,0 +1,258 @@
+---
+# =============================================================================
+# Role: common
+# Applied to ALL hosts — baseline hardening, audit logging, SSH lockdown
+# =============================================================================
+
+# ── Package baseline ─────────────────────────────────────────────────────────
+- name: "common | Update apt cache"
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_os_family == "Debian"
+
+- name: "common | Install baseline security packages"
+  ansible.builtin.package:
+    name:
+      - auditd
+      - audispd-plugins
+      - aide
+      - fail2ban
+      - ufw
+      - unattended-upgrades
+      - apt-listchanges
+      - curl
+      - wget
+      - git
+      - vim
+      - htop
+      - net-tools
+      - tcpdump
+      - rsyslog
+      - logrotate
+      - ca-certificates
+      - gnupg
+      - lsb-release
+      - chrony
+      - acl
+    state: present
+  when: ansible_os_family == "Debian"
+
+# ── Time sync (critical for forensic log correlation) ────────────────────────
+- name: "common | Configure chrony NTP"
+  ansible.builtin.template:
+    src: chrony.conf.j2
+    dest: /etc/chrony.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart chrony
+
+- name: "common | Ensure chronyd is running"
+  ansible.builtin.service:
+    name: chronyd
+    state: started
+    enabled: true
+
+# ── SSH hardening ─────────────────────────────────────────────────────────────
+- name: "common | Harden SSH configuration"
+  ansible.builtin.template:
+    src: sshd_config.j2
+    dest: /etc/ssh/sshd_config
+    owner: root
+    group: root
+    mode: "0600"
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Restart sshd
+
+- name: "common | Disable root login via SSH"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?PermitRootLogin"
+    line: "PermitRootLogin no"
+    state: present
+  notify: Restart sshd
+
+- name: "common | Disable password authentication"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?PasswordAuthentication"
+    line: "PasswordAuthentication no"
+    state: present
+  notify: Restart sshd
+
+# ── Ansible service account ──────────────────────────────────────────────────
+- name: "common | Create ansible service user"
+  ansible.builtin.user:
+    name: ansible
+    shell: /bin/bash
+    groups: sudo
+    append: true
+    create_home: true
+    system: false
+
+- name: "common | Deploy ansible user authorized key"
+  ansible.posix.authorized_key:
+    user: ansible
+    state: present
+    key: "{{ lookup('file', '~/.ssh/ecrime_homelab_ed25519.pub') }}"
+    exclusive: true
+
+- name: "common | Configure passwordless sudo for ansible user"
+  ansible.builtin.copy:
+    content: "ansible ALL=(ALL) NOPASSWD:ALL\n"
+    dest: /etc/sudoers.d/ansible
+    owner: root
+    group: root
+    mode: "0440"
+    validate: /usr/sbin/visudo -cf %s
+
+# ── Firewall (UFW) ────────────────────────────────────────────────────────────
+- name: "common | Set UFW default deny incoming"
+  community.general.ufw:
+    default: deny
+    direction: incoming
+
+- name: "common | Set UFW default allow outgoing"
+  community.general.ufw:
+    default: allow
+    direction: outgoing
+
+- name: "common | Allow SSH"
+  community.general.ufw:
+    rule: allow
+    port: "22"
+    proto: tcp
+
+- name: "common | Enable UFW"
+  community.general.ufw:
+    state: enabled
+
+# ── Kernel hardening (sysctl) ─────────────────────────────────────────────────
+- name: "common | Apply sysctl hardening parameters"
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: true
+    sysctl_file: /etc/sysctl.d/99-ecrime-hardening.conf
+  loop:
+    # Network hardening
+    - { name: net.ipv4.ip_forward,                        value: "0" }
+    - { name: net.ipv4.conf.all.send_redirects,           value: "0" }
+    - { name: net.ipv4.conf.default.send_redirects,       value: "0" }
+    - { name: net.ipv4.conf.all.accept_redirects,         value: "0" }
+    - { name: net.ipv4.conf.default.accept_redirects,     value: "0" }
+    - { name: net.ipv4.conf.all.accept_source_route,      value: "0" }
+    - { name: net.ipv4.conf.all.log_martians,             value: "1" }
+    - { name: net.ipv4.conf.default.log_martians,         value: "1" }
+    - { name: net.ipv4.icmp_echo_ignore_broadcasts,       value: "1" }
+    - { name: net.ipv4.icmp_ignore_bogus_error_responses, value: "1" }
+    - { name: net.ipv4.tcp_syncookies,                    value: "1" }
+    - { name: net.ipv6.conf.all.disable_ipv6,             value: "1" }
+    - { name: net.ipv6.conf.default.disable_ipv6,         value: "1" }
+    # Kernel hardening
+    - { name: kernel.randomize_va_space,                  value: "2" }
+    - { name: kernel.dmesg_restrict,                      value: "1" }
+    - { name: kernel.kptr_restrict,                       value: "2" }
+    - { name: kernel.yama.ptrace_scope,                   value: "1" }
+    - { name: kernel.sysrq,                               value: "0" }
+    - { name: fs.protected_hardlinks,                     value: "1" }
+    - { name: fs.protected_symlinks,                      value: "1" }
+    - { name: fs.suid_dumpable,                           value: "0" }
+
+# ── Auditd (forensic audit logging) ──────────────────────────────────────────
+- name: "common | Deploy auditd rules"
+  ansible.builtin.template:
+    src: audit.rules.j2
+    dest: /etc/audit/rules.d/99-ecrime.rules
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart auditd
+
+- name: "common | Ensure auditd is running"
+  ansible.builtin.service:
+    name: auditd
+    state: started
+    enabled: true
+
+# ── Rsyslog → SOF-ELK forwarding ─────────────────────────────────────────────
+- name: "common | Configure rsyslog forwarding to SOF-ELK"
+  ansible.builtin.template:
+    src: rsyslog-sofelk.conf.j2
+    dest: /etc/rsyslog.d/50-sofelk.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart rsyslog
+
+# ── Fail2ban ──────────────────────────────────────────────────────────────────
+- name: "common | Deploy fail2ban jail config"
+  ansible.builtin.template:
+    src: fail2ban-jail.conf.j2
+    dest: /etc/fail2ban/jail.d/ecrime.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart fail2ban
+
+- name: "common | Ensure fail2ban is running"
+  ansible.builtin.service:
+    name: fail2ban
+    state: started
+    enabled: true
+
+# ── Unattended upgrades (security patches only) ───────────────────────────────
+- name: "common | Enable unattended security upgrades"
+  ansible.builtin.template:
+    src: unattended-upgrades.conf.j2
+    dest: /etc/apt/apt.conf.d/50unattended-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+
+# ── Disable unnecessary services ──────────────────────────────────────────────
+- name: "common | Disable unnecessary services"
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+    - avahi-daemon
+    - bluetooth
+    - cups
+    - isc-dhcp-server
+    - rpcbind
+  failed_when: false  # Skip if service does not exist on this host
+
+# ── AIDE integrity baseline ───────────────────────────────────────────────────
+- name: "common | Initialize AIDE database (first run)"
+  ansible.builtin.command: aide --init
+  args:
+    creates: /var/lib/aide/aide.db.new
+  register: aide_init
+  changed_when: aide_init.rc == 0
+
+- name: "common | Move AIDE database into place"
+  ansible.builtin.command: mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
+  args:
+    creates: /var/lib/aide/aide.db
+  when: aide_init.changed
+
+- name: "common | Deploy AIDE daily check cron"
+  ansible.builtin.cron:
+    name: "AIDE integrity check"
+    minute: "30"
+    hour: "2"
+    job: "/usr/bin/aide --check 2>&1 | /usr/bin/logger -t aide"
+    user: root
+
+# ── MOTD (analyst context banner) ────────────────────────────────────────────
+- name: "common | Deploy MOTD banner"
+  ansible.builtin.template:
+    src: motd.j2
+    dest: /etc/motd
+    owner: root
+    group: root
+    mode: "0644"

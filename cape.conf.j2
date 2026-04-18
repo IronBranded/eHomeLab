@@ -1,0 +1,46 @@
+# =============================================================================
+# CAPE Sandbox — Main Configuration
+# Managed by Ansible — DO NOT edit manually
+# =============================================================================
+
+[cuckoo]
+version_check = yes
+delete_original = no
+delete_bin_copy = no
+machinery = kvm
+memory_dump = {{ cape_memory_dump | lower }}
+terminate_processes = no
+reschedule = no
+process_results = yes
+max_analysis_images = 0
+rooter = /tmp/cape-rooter.sock
+
+[resultserver]
+ip = {{ cape_kvm_gateway }}
+port = 2042
+upload_max_size = 134217728
+
+[processing]
+results_cell_max_size = 1048576
+
+[database]
+connection = postgresql://{{ cape_db_user }}:{{ cape_db_password }}@{{ cape_db_host }}/{{ cape_db_name }}
+timeout = 60
+
+[timeouts]
+default = {{ cape_analysis_timeout }}
+critical = {{ cape_critical_timeout }}
+vm_state = 60
+
+[tmppath]
+path = {{ cape_storage_path }}/tmp
+
+[virustotal]
+enabled = no
+
+[memory]
+guest_profile =
+delete_memdump = no
+
+[logging]
+level = INFO

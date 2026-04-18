@@ -1,0 +1,37 @@
+# =============================================================================
+# Zeek local site policy — ECrime Homelab
+# =============================================================================
+
+@load base/frameworks/signatures
+@load base/protocols/conn
+@load base/protocols/dns
+@load base/protocols/ftp
+@load base/protocols/http
+@load base/protocols/smtp
+@load base/protocols/ssl
+@load base/protocols/ssh
+@load base/protocols/rdp
+@load base/frameworks/files/hash
+@load base/frameworks/notice
+
+# Log all file hashes for forensic correlation
+@load frameworks/files/hash
+redef FileExtract::prefix = "/opt/zeek/extracted/";
+
+# Detect port scans
+@load misc/scan
+
+# Log software versions (banner grabbing)
+@load misc/software
+
+# Detect known bad JA3 signatures
+# @load policy/protocols/ssl/ja3
+
+# Hash all transferred files (SHA-256 for IOC matching)
+redef FileAnalysis::enable_md5    = T;
+redef FileAnalysis::enable_sha1   = T;
+redef FileAnalysis::enable_sha256 = T;
+
+# Increase connection table size for high-traffic analysis
+redef tcp_inactivity_timeout = 1 min;
+redef udp_inactivity_timeout = 1 min;

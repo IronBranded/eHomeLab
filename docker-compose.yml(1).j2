@@ -1,0 +1,132 @@
+---
+# =============================================================================
+# OpenCTI — Docker Compose Stack
+# Managed by Ansible — VLAN 40 | 10.0.40.11
+# =============================================================================
+
+version: "3.8"
+
+services:
+
+  redis:
+    image: redis:7.2
+    container_name: opencti-redis
+    restart: unless-stopped
+    volumes:
+      - /opt/opencti/redis:/data
+    networks:
+      - opencti-internal
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: opencti-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - /opt/opencti/elasticsearch:/usr/share/elasticsearch/data
+    networks:
+      - opencti-internal
+
+  minio:
+    image: minio/minio:latest
+    container_name: opencti-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: opencti
+      MINIO_ROOT_PASSWORD: "{{ vault_opencti_minio_secret }}"
+    command: server /data
+    volumes:
+      - /opt/opencti/s3:/data
+    networks:
+      - opencti-internal
+
+  rabbitmq:
+    image: rabbitmq:3.12-management
+    container_name: opencti-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: opencti
+      RABBITMQ_DEFAULT_PASS: "{{ vault_opencti_rabbitmq_password }}"
+    volumes:
+      - /opt/opencti/rabbitmq:/var/lib/rabbitmq
+    networks:
+      - opencti-internal
+
+  opencti:
+    image: opencti/platform:{{ opencti_version }}
+    container_name: opencti
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - elasticsearch
+      - minio
+      - rabbitmq
+    ports:
+      - "{{ opencti_port }}:8080"
+    environment:
+      NODE_OPTIONS: "--max-old-space-size=8096"
+      APP__PORT: 8080
+      APP__BASE_URL: "http://{{ opencti_ip }}"
+      APP__ADMIN__EMAIL: "admin@ecrime.lab"
+      APP__ADMIN__PASSWORD: "{{ vault_opencti_admin_password }}"
+      APP__ADMIN__TOKEN: "{{ vault_opencti_admin_token }}"
+      APP__APP_LOGS__LOGS_LEVEL: error
+      REDIS__HOSTNAME: redis
+      REDIS__PORT: 6379
+      ELASTICSEARCH__URL: "http://elasticsearch:9200"
+      MINIO__ENDPOINT: minio
+      MINIO__PORT: 9000
+      MINIO__USE_SSL: "false"
+      MINIO__ACCESS_KEY: opencti
+      MINIO__SECRET_KEY: "{{ vault_opencti_minio_secret }}"
+      RABBITMQ__HOSTNAME: rabbitmq
+      RABBITMQ__PORT: 5672
+      RABBITMQ__USERNAME: opencti
+      RABBITMQ__PASSWORD: "{{ vault_opencti_rabbitmq_password }}"
+      SMTP__HOSTNAME: localhost
+      SMTP__PORT: 25
+    networks:
+      - opencti-internal
+      - opencti-external
+
+  connector-misp:
+    image: opencti/connector-misp:{{ opencti_version }}
+    container_name: opencti-connector-misp
+    restart: unless-stopped
+    depends_on:
+      - opencti
+    environment:
+      OPENCTI_URL: "http://opencti:8080"
+      OPENCTI_TOKEN: "{{ vault_opencti_admin_token }}"
+      CONNECTOR_ID: "{{ opencti_misp_connector_id | default('random-uuid') }}"
+      CONNECTOR_TYPE: EXTERNAL_IMPORT
+      CONNECTOR_NAME: MISP
+      CONNECTOR_SCOPE: "misp-event"
+      CONNECTOR_CONFIDENCE_LEVEL: 75
+      CONNECTOR_UPDATE_EXISTING_DATA: "false"
+      CONNECTOR_LOG_LEVEL: error
+      MISP_URL: "http://{{ misp_ip }}"
+      MISP_KEY: "{{ vault_misp_admin_key }}"
+      MISP_SSL: "false"
+      MISP_DATETIME_ATTRIBUTE: 7
+      MISP_CREATE_REPORTS: "true"
+      MISP_INTERVAL: 5
+    networks:
+      - opencti-internal
+
+networks:
+  opencti-internal:
+    driver: bridge
+    internal: true
+  opencti-external:
+    driver: bridge

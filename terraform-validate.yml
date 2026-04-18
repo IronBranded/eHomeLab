@@ -1,0 +1,97 @@
+---
+# =============================================================================
+# .github/workflows/terraform-validate.yml
+# Validates Terraform configs on every push/PR touching infrastructure/
+# =============================================================================
+
+name: Terraform Validate
+
+on:
+  push:
+    paths:
+      - 'infrastructure/proxmox/**'
+      - '.github/workflows/terraform-validate.yml'
+  pull_request:
+    paths:
+      - 'infrastructure/proxmox/**'
+
+jobs:
+  validate:
+    name: Terraform Validate
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.6"
+
+      - name: Terraform Format Check
+        run: |
+          cd infrastructure/proxmox
+          terraform fmt -check -recursive -diff
+        continue-on-error: false
+
+      - name: Terraform Init (no backend)
+        run: |
+          cd infrastructure/proxmox
+          # Create dummy tfvars to satisfy required variables
+          cat > ci.tfvars << 'EOF'
+          proxmox_api_url          = "https://10.0.10.1:8006/api2/json"
+          proxmox_api_token_id     = "terraform@pam!ci"
+          proxmox_api_token_secret = "00000000-0000-0000-0000-000000000000"
+          proxmox_node             = "pve"
+          proxmox_tls_insecure     = true
+          ssh_public_key           = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI ci-placeholder"
+          vm_storage_pool          = "local-lvm"
+          nas_storage_pool         = "local-hdd"
+          iso_storage              = "local"
+          dns_server               = "10.0.10.1"
+          EOF
+          terraform init -backend=false
+
+      - name: Terraform Validate
+        run: |
+          cd infrastructure/proxmox
+          terraform validate
+
+      - name: Validate modules
+        run: |
+          for mod in infrastructure/proxmox/modules/*/; do
+            echo "Validating module: $mod"
+            cd "$mod"
+            terraform init -backend=false
+            terraform validate
+            cd - > /dev/null
+          done
+
+      - name: tfsec security scan
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          working_directory: infrastructure/proxmox
+          soft_fail: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  docs-check:
+    name: Docs Link Check
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for broken internal links in docs
+        run: |
+          pip install markdown-link-check 2>/dev/null || true
+          find docs/ workflows/ -name "*.md" -exec \
+            grep -oP '\[.*?\]\(\K[^)]+' {} \; | \
+            grep -v "^http" | \
+            while read -r link; do
+              if [[ ! -f "$link" ]]; then
+                echo "WARNING: Broken internal link: $link"
+              fi
+            done
+          echo "Link check complete"

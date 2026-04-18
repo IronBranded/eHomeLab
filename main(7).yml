@@ -1,0 +1,105 @@
+---
+# =============================================================================
+# Role: inetsim
+# Deploys INetSim — fake internet services for malware detonation
+# VLAN 30 AIR-GAPPED (10.0.30.11) — no real internet routing
+# =============================================================================
+
+- name: "inetsim | Install INetSim"
+  ansible.builtin.apt:
+    name:
+      - inetsim
+      - tcpdump
+      - wireshark-common
+      - tshark
+    state: present
+    update_cache: true
+
+- name: "inetsim | Create INetSim directory structure"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: inetsim
+    group: inetsim
+    mode: "0750"
+  loop:
+    - /var/lib/inetsim
+    - /var/log/inetsim
+    - /var/log/inetsim/captures
+
+- name: "inetsim | Deploy INetSim configuration"
+  ansible.builtin.template:
+    src: inetsim.conf.j2
+    dest: /etc/inetsim/inetsim.conf
+    owner: root
+    group: inetsim
+    mode: "0640"
+  notify: Restart inetsim
+
+- name: "inetsim | Deploy fake HTTP content directory"
+  ansible.builtin.file:
+    path: /var/lib/inetsim/http/fakefiles
+    state: directory
+    owner: inetsim
+    group: inetsim
+    mode: "0750"
+
+- name: "inetsim | Create fake PE payload for HTTP responses"
+  ansible.builtin.copy:
+    content: "MZ"
+    dest: /var/lib/inetsim/http/fakefiles/sample.exe
+    owner: inetsim
+    group: inetsim
+    mode: "0640"
+
+- name: "inetsim | Deploy INetSim systemd service"
+  ansible.builtin.template:
+    src: inetsim.service.j2
+    dest: /etc/systemd/system/inetsim.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart inetsim
+
+- name: "inetsim | Enable and start INetSim"
+  ansible.builtin.service:
+    name: inetsim
+    state: started
+    enabled: true
+
+# ── tcpdump capture — all C2 traffic captured for analysis ───────────────────
+- name: "inetsim | Deploy capture service"
+  ansible.builtin.template:
+    src: inetsim-capture.service.j2
+    dest: /etc/systemd/system/inetsim-capture.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+
+- name: "inetsim | Enable traffic capture service"
+  ansible.builtin.service:
+    name: inetsim-capture
+    state: started
+    enabled: true
+
+# ── Firewall — accept all from CAPE detonation subnet only ───────────────────
+- name: "inetsim | UFW — deny all by default"
+  community.general.ufw:
+    default: deny
+    direction: incoming
+
+- name: "inetsim | UFW — accept all from CAPE detonation guests"
+  community.general.ufw:
+    rule: allow
+    src: "{{ cape_kvm_subnet }}"
+
+- name: "inetsim | UFW — accept SSH from Proxmox jump host only"
+  community.general.ufw:
+    rule: allow
+    port: "22"
+    proto: tcp
+    src: "10.0.10.1"

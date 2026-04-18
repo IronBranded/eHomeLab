@@ -1,0 +1,100 @@
+---
+# =============================================================================
+# Role: shuffle
+# Deploys Shuffle SOAR — open-source security orchestration
+# VLAN 40 (10.0.40.22) — AGPL licensed
+# =============================================================================
+
+- name: "shuffle | Ensure Docker is running"
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+
+- name: "shuffle | Set vm.max_map_count for Opensearch"
+  ansible.posix.sysctl:
+    name: vm.max_map_count
+    value: "262144"
+    state: present
+    reload: true
+    sysctl_file: /etc/sysctl.d/99-shuffle.conf
+
+- name: "shuffle | Create directory structure"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: docker
+    mode: "0750"
+  loop:
+    - /opt/shuffle
+    - /opt/shuffle/data
+    - /opt/shuffle/data/shuffle-database
+    - /opt/shuffle/apps
+    - /opt/shuffle/files
+
+- name: "shuffle | Clone Shuffle repository"
+  ansible.builtin.git:
+    repo: "https://github.com/Shuffle/Shuffle.git"
+    dest: /opt/shuffle/repo
+    version: "{{ shuffle_version }}"
+    depth: 1
+    force: false
+
+- name: "shuffle | Deploy Docker Compose file"
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: /opt/shuffle/docker-compose.yml
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart shuffle stack
+
+- name: "shuffle | Pull Shuffle images"
+  community.docker.docker_compose:
+    project_src: /opt/shuffle
+    pull: true
+    state: present
+
+- name: "shuffle | Start Shuffle stack"
+  community.docker.docker_compose:
+    project_src: /opt/shuffle
+    state: present
+
+- name: "shuffle | Wait for Shuffle to be ready"
+  ansible.builtin.uri:
+    url: "https://localhost:{{ shuffle_port }}/api/v1/health"
+    method: GET
+    status_code: [200, 301, 302]
+    validate_certs: false
+  register: shuffle_ready
+  retries: 30
+  delay: 15
+  until: shuffle_ready.status in [200, 301, 302]
+
+- name: "shuffle | Deploy systemd wrapper"
+  ansible.builtin.template:
+    src: shuffle-stack.service.j2
+    dest: /etc/systemd/system/shuffle-stack.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: "shuffle | Enable shuffle-stack on boot"
+  ansible.builtin.systemd:
+    name: shuffle-stack
+    enabled: true
+    daemon_reload: true
+
+# ── Firewall ──────────────────────────────────────────────────────────────────
+- name: "shuffle | Allow Shuffle UI from management + analysis VLANs"
+  community.general.ufw:
+    rule: allow
+    port: "{{ shuffle_port }}"
+    proto: tcp
+    src: "{{ item }}"
+  loop:
+    - "10.0.10.0/24"
+    - "10.0.20.0/24"
+    - "10.0.40.0/24"

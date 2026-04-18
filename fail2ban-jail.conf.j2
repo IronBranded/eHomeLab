@@ -1,0 +1,31 @@
+# =============================================================================
+# fail2ban — ECrime Homelab jail configuration
+# Managed by Ansible — DO NOT edit manually
+# =============================================================================
+
+[DEFAULT]
+bantime   = {{ fail2ban_bantime }}
+findtime  = {{ fail2ban_findtime }}
+maxretry  = {{ fail2ban_maxretry }}
+backend   = systemd
+banaction = iptables-multiport
+
+# Forward bans to SOF-ELK via syslog
+action = %(action_mwl)s
+
+[sshd]
+enabled  = true
+port     = {{ ssh_port }}
+filter   = sshd
+logpath  = %(sshd_log)s
+maxretry = {{ fail2ban_maxretry }}
+bantime  = {{ fail2ban_bantime }}
+
+[sshd-ddos]
+enabled  = true
+port     = {{ ssh_port }}
+filter   = sshd-ddos
+logpath  = %(sshd_log)s
+maxretry = 10
+findtime = 60
+bantime  = 3600

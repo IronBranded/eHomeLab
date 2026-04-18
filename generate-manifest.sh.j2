@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# =============================================================================
+# generate-manifest — Forensic hash manifest generator
+# Managed by Ansible — DO NOT edit manually
+# Generates SHA-256 + MD5 dual hash manifest on evidence ingest
+# Logs all events to SOF-ELK via syslog
+# =============================================================================
+
+set -euo pipefail
+
+EVIDENCE_BASE="/srv/evidence"
+MANIFEST_DIR="/srv/evidence/manifests"
+ANALYST="${SUDO_USER:-$(whoami)}"
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+log() { logger -t "evidence-manifest" "$*"; echo "[$(date -u +%H:%M:%S)] $*"; }
+
+usage() {
+  echo "Usage: generate-manifest <path_to_evidence_file_or_dir>"
+  echo "  Generates SHA-256 + MD5 manifest and logs chain of custody event"
+  exit 1
+}
+
+TARGET="${1:?$(usage)}"
+
+if [[ ! -e "$TARGET" ]]; then
+  log "ERROR: Target not found: ${TARGET}"
+  exit 1
+fi
+
+mkdir -p "${MANIFEST_DIR}"
+
+CASE_ID=$(basename "$(dirname "$TARGET")")
+MANIFEST_FILE="${MANIFEST_DIR}/${CASE_ID}-$(date +%Y%m%d-%H%M%S).manifest"
+
+log "Starting manifest generation for: ${TARGET}"
+log "Analyst: ${ANALYST} | Case: ${CASE_ID}"
+
+echo "# ECrime Homelab — Evidence Manifest" > "${MANIFEST_FILE}"
+echo "# Generated: ${TIMESTAMP}" >> "${MANIFEST_FILE}"
+echo "# Analyst: ${ANALYST}" >> "${MANIFEST_FILE}"
+echo "# Case: ${CASE_ID}" >> "${MANIFEST_FILE}"
+echo "# Target: ${TARGET}" >> "${MANIFEST_FILE}"
+echo "#" >> "${MANIFEST_FILE}"
+echo "# FORMAT: SHA256  MD5  FILEPATH  SIZE_BYTES" >> "${MANIFEST_FILE}"
+echo "# ───────────────────────────────────────────────────────────" >> "${MANIFEST_FILE}"
+
+# ── Hash all files ────────────────────────────────────────────────────────────
+if [[ -f "$TARGET" ]]; then
+  FILES=("$TARGET")
+else
+  mapfile -t FILES < <(find "$TARGET" -type f | sort)
+fi
+
+TOTAL=${#FILES[@]}
+COUNT=0
+
+for f in "${FILES[@]}"; do
+  SHA256=$(sha256sum "$f" | awk '{print $1}')
+  MD5=$(md5sum "$f" | awk '{print $1}')
+  SIZE=$(stat -c%s "$f")
+  echo "${SHA256}  ${MD5}  ${f}  ${SIZE}" >> "${MANIFEST_FILE}"
+  COUNT=$((COUNT + 1))
+  if (( COUNT % 100 == 0 )); then
+    log "Progress: ${COUNT}/${TOTAL} files hashed"
+  fi
+done
+
+# ── Sign the manifest itself ──────────────────────────────────────────────────
+MANIFEST_SHA256=$(sha256sum "${MANIFEST_FILE}" | awk '{print $1}')
+echo "" >> "${MANIFEST_FILE}"
+echo "# MANIFEST CHECKSUM (SHA-256): ${MANIFEST_SHA256}" >> "${MANIFEST_FILE}"
+
+chmod 444 "${MANIFEST_FILE}"  # Make manifest read-only
+
+# ── SOF-ELK log event ─────────────────────────────────────────────────────────
+logger -t "evidence-ingest" \
+  "action=manifest_generated analyst=${ANALYST} case=${CASE_ID} \
+   files=${TOTAL} manifest=${MANIFEST_FILE} manifest_sha256=${MANIFEST_SHA256} \
+   target=${TARGET} timestamp=${TIMESTAMP}"
+
+log "Manifest complete: ${MANIFEST_FILE}"
+log "Files processed: ${TOTAL} | Manifest SHA-256: ${MANIFEST_SHA256}"

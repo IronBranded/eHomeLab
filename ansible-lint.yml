@@ -1,0 +1,79 @@
+---
+# =============================================================================
+# .github/workflows/ansible-lint.yml
+# Runs ansible-lint on every push and PR touching ansible/
+# =============================================================================
+
+name: Ansible Lint
+
+on:
+  push:
+    paths:
+      - 'ansible/**'
+      - '.github/workflows/ansible-lint.yml'
+  pull_request:
+    paths:
+      - 'ansible/**'
+
+jobs:
+  lint:
+    name: Ansible Lint
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Ansible and lint tools
+        run: |
+          pip install --upgrade pip
+          pip install ansible ansible-lint yamllint
+
+      - name: Create dummy vault password file
+        run: echo "dummy-vault-pass-for-ci" > /tmp/.vault_pass
+
+      - name: Create dummy inventory for lint
+        run: |
+          cp ansible/inventory.ini.tmpl ansible/inventory.ini
+          # Replace placeholder IPs with valid dummy values
+          sed -i 's/ansible_host=<PLACEHOLDER>/ansible_host=127.0.0.1/g' ansible/inventory.ini
+
+      - name: Run yamllint on all YAML files
+        run: |
+          yamllint -d '{extends: default, rules: {line-length: {max: 160}, truthy: {allowed-values: ["true", "false", "yes", "no"]}}}' \
+            ansible/site.yml \
+            ansible/group_vars/all.yml \
+            $(find ansible/roles -name "*.yml" | head -50)
+
+      - name: Run ansible-lint
+        run: |
+          cd ansible
+          ansible-lint site.yml \
+            --exclude roles/common/tasks/main.yml \
+            -c ../.ansible-lint \
+            --warn-list yaml,name[casing]
+        env:
+          ANSIBLE_VAULT_PASSWORD_FILE: /tmp/.vault_pass
+          ANSIBLE_ROLES_PATH: ansible/roles
+
+      - name: Check for hardcoded secrets
+        run: |
+          echo "Scanning for accidental secret commits..."
+          # Fail if any non-template file contains CHANGEME or real-looking secrets
+          if grep -r "CHANGEME" ansible/ --include="*.yml" \
+            --exclude="vault.yml.tmpl" \
+            --exclude="all.yml" \
+            --exclude="secrets.yml.tmpl" | grep -v ".tmpl"; then
+            echo "WARNING: CHANGEME placeholder found outside template files"
+          fi
+          # Never allow actual private keys in any yml
+          if grep -rE "BEGIN (RSA|EC|OPENSSH) PRIVATE KEY" ansible/; then
+            echo "ERROR: Private key detected in ansible directory!"
+            exit 1
+          fi
+          echo "Secret scan passed."

@@ -1,0 +1,198 @@
+---
+# =============================================================================
+# Role: cape_sandbox
+# Deploys CAPE Sandbox for dynamic malware analysis on VLAN 30 (air-gapped)
+# =============================================================================
+
+# ── System dependencies ───────────────────────────────────────────────────────
+- name: "cape | Install system dependencies"
+  ansible.builtin.apt:
+    name:
+      - python3
+      - python3-pip
+      - python3-dev
+      - python3-venv
+      - git
+      - libssl-dev
+      - libffi-dev
+      - build-essential
+      - libjpeg-dev
+      - zlib1g-dev
+      - mongodb
+      - postgresql
+      - postgresql-contrib
+      - libpq-dev
+      - tcpdump
+      - apparmor-utils
+      - libvirt-daemon-system
+      - libvirt-clients
+      - qemu-kvm
+      - virtinst
+      - bridge-utils
+      - swig
+      - ssdeep
+      - libfuzzy-dev
+    state: present
+    update_cache: true
+
+# ── Create CAPE user ──────────────────────────────────────────────────────────
+- name: "cape | Create cape user"
+  ansible.builtin.user:
+    name: cape
+    shell: /bin/bash
+    groups: libvirt,kvm,pcap
+    append: true
+    home: /opt/cape
+
+- name: "cape | Create pcap group"
+  ansible.builtin.group:
+    name: pcap
+    state: present
+
+# ── tcpdump capabilities (for non-root packet capture) ───────────────────────
+- name: "cape | Set tcpdump capabilities for packet capture"
+  community.general.capabilities:
+    path: /usr/bin/tcpdump
+    capability: cap_net_raw,cap_net_admin=eip
+    state: present
+
+# ── Directory structure ───────────────────────────────────────────────────────
+- name: "cape | Create directory structure"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: cape
+    group: cape
+    mode: "0750"
+  loop:
+    - /opt/cape
+    - /opt/cape/storage
+    - /opt/cape/storage/analyses
+    - /opt/cape/storage/binaries
+    - /opt/cape/storage/baseline
+    - /opt/cape/logs
+
+# ── Clone CAPE repository ─────────────────────────────────────────────────────
+- name: "cape | Clone CAPE repository"
+  ansible.builtin.git:
+    repo: "https://github.com/kevoreilly/CAPEv2.git"
+    dest: /opt/cape/CAPEv2
+    version: "{{ cape_version | default('master') }}"
+    force: false
+  become_user: cape
+
+# ── Python virtual environment ────────────────────────────────────────────────
+- name: "cape | Create Python venv"
+  ansible.builtin.command:
+    cmd: python3 -m venv /opt/cape/venv
+    creates: /opt/cape/venv/bin/activate
+  become_user: cape
+
+- name: "cape | Install Python requirements"
+  ansible.builtin.pip:
+    requirements: /opt/cape/CAPEv2/requirements.txt
+    virtualenv: /opt/cape/venv
+    state: present
+  become_user: cape
+
+# ── PostgreSQL database ───────────────────────────────────────────────────────
+- name: "cape | Ensure PostgreSQL is running"
+  ansible.builtin.service:
+    name: postgresql
+    state: started
+    enabled: true
+
+- name: "cape | Create cape database user"
+  community.postgresql.postgresql_user:
+    name: cape
+    password: "{{ vault_cape_db_password }}"
+    state: present
+  become_user: postgres
+
+- name: "cape | Create cape database"
+  community.postgresql.postgresql_db:
+    name: cape
+    owner: cape
+    state: present
+  become_user: postgres
+
+# ── CAPE configuration ────────────────────────────────────────────────────────
+- name: "cape | Deploy CAPE configuration"
+  ansible.builtin.template:
+    src: cape.conf.j2
+    dest: /opt/cape/CAPEv2/conf/cape.conf
+    owner: cape
+    group: cape
+    mode: "0640"
+  notify: Restart cape
+
+- name: "cape | Deploy reporting configuration"
+  ansible.builtin.template:
+    src: reporting.conf.j2
+    dest: /opt/cape/CAPEv2/conf/reporting.conf
+    owner: cape
+    group: cape
+    mode: "0640"
+
+# ── KVM network — isolated (NAT-less for detonation) ─────────────────────────
+- name: "cape | Create isolated KVM network for detonation VMs"
+  community.libvirt.virt_net:
+    name: cape-isolated
+    state: present
+    xml: "{{ lookup('template', 'kvm-isolated-net.xml.j2') }}"
+
+- name: "cape | Start isolated KVM network"
+  community.libvirt.virt_net:
+    name: cape-isolated
+    state: active
+    autostart: true
+
+# ── Systemd services ──────────────────────────────────────────────────────────
+- name: "cape | Deploy CAPE rooter service"
+  ansible.builtin.template:
+    src: cape-rooter.service.j2
+    dest: /etc/systemd/system/cape-rooter.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: "cape | Deploy CAPE main service"
+  ansible.builtin.template:
+    src: cape.service.j2
+    dest: /etc/systemd/system/cape.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: "cape | Enable and start CAPE services"
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop:
+    - cape-rooter
+    - cape
+
+# ── Firewall — CAPE is on air-gapped VLAN 30 ─────────────────────────────────
+# Only allow inbound from management jump host for administration
+- name: "cape | UFW — deny all by default (air-gapped)"
+  community.general.ufw:
+    default: deny
+    direction: incoming
+
+- name: "cape | UFW — allow admin SSH from management only"
+  community.general.ufw:
+    rule: allow
+    port: "22"
+    proto: tcp
+    src: "10.0.10.1"  # Proxmox jump host only
+
+- name: "cape | UFW — allow CAPE web UI from analysis VLAN only"
+  community.general.ufw:
+    rule: allow
+    port: "{{ cape_web_port }}"
+    proto: tcp
+    src: "10.0.20.0/24"

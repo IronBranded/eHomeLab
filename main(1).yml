@@ -1,0 +1,176 @@
+---
+# =============================================================================
+# Role: velociraptor
+# Deploys Velociraptor server — EDR, live response, VQL hunt engine
+# =============================================================================
+
+# ── Dependencies ─────────────────────────────────────────────────────────────
+- name: "velociraptor | Install dependencies"
+  ansible.builtin.apt:
+    name:
+      - curl
+      - tar
+      - openssl
+    state: present
+    update_cache: true
+
+# ── Create service user ───────────────────────────────────────────────────────
+- name: "velociraptor | Create velociraptor system user"
+  ansible.builtin.user:
+    name: velociraptor
+    system: true
+    shell: /usr/sbin/nologin
+    home: /opt/velociraptor
+    create_home: true
+
+# ── Download binary ───────────────────────────────────────────────────────────
+- name: "velociraptor | Download Velociraptor binary"
+  ansible.builtin.get_url:
+    url: "https://github.com/Velocidex/velociraptor/releases/download/v{{ velociraptor_version }}/velociraptor-v{{ velociraptor_version }}-linux-amd64"
+    dest: "/usr/local/bin/velociraptor"
+    mode: "0755"
+    owner: root
+    group: root
+    checksum: "sha256:{{ velociraptor_sha256 }}"
+
+# ── Directory structure ───────────────────────────────────────────────────────
+- name: "velociraptor | Create directory structure"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: velociraptor
+    group: velociraptor
+    mode: "0750"
+  loop:
+    - /opt/velociraptor
+    - /opt/velociraptor/config
+    - /opt/velociraptor/datastore
+    - /opt/velociraptor/logs
+    - /opt/velociraptor/clients
+    - /opt/velociraptor/hunts
+
+# ── Generate server config ────────────────────────────────────────────────────
+- name: "velociraptor | Check if server config already exists"
+  ansible.builtin.stat:
+    path: /opt/velociraptor/config/server.config.yaml
+  register: velo_config_stat
+
+- name: "velociraptor | Generate server config (first run)"
+  ansible.builtin.command:
+    cmd: >
+      velociraptor config generate
+      --merge '{"Frontend":{"hostname":"{{ velociraptor_hostname }}"}}'
+    creates: /opt/velociraptor/config/server.config.yaml
+  when: not velo_config_stat.stat.exists
+  register: velo_config_generate
+
+- name: "velociraptor | Write generated config"
+  ansible.builtin.copy:
+    content: "{{ velo_config_generate.stdout }}"
+    dest: /opt/velociraptor/config/server.config.yaml
+    owner: velociraptor
+    group: velociraptor
+    mode: "0600"
+  when:
+    - not velo_config_stat.stat.exists
+    - velo_config_generate is defined
+    - velo_config_generate.stdout is defined
+
+# ── Deploy config template (if overriding auto-generated) ────────────────────
+- name: "velociraptor | Deploy server config template"
+  ansible.builtin.template:
+    src: server.config.yaml.j2
+    dest: /opt/velociraptor/config/server.config.yaml
+    owner: velociraptor
+    group: velociraptor
+    mode: "0600"
+  when: velociraptor_use_template | default(false)
+  notify: Restart velociraptor
+
+# ── Create admin user ────────────────────────────────────────────────────────
+- name: "velociraptor | Check if admin user exists"
+  ansible.builtin.command:
+    cmd: velociraptor --config /opt/velociraptor/config/server.config.yaml user show admin
+  register: velo_admin_check
+  failed_when: false
+  changed_when: false
+
+- name: "velociraptor | Create admin user"
+  ansible.builtin.shell:
+    cmd: >
+      echo "{{ velociraptor_admin_password }}" |
+      velociraptor --config /opt/velociraptor/config/server.config.yaml
+      user add admin --role administrator
+  when: "'admin' not in velo_admin_check.stdout"
+  no_log: true
+
+# ── Systemd service ───────────────────────────────────────────────────────────
+- name: "velociraptor | Deploy systemd service unit"
+  ansible.builtin.template:
+    src: velociraptor.service.j2
+    dest: /etc/systemd/system/velociraptor.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart velociraptor
+
+- name: "velociraptor | Enable and start Velociraptor service"
+  ansible.builtin.systemd:
+    name: velociraptor
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# ── Firewall rules ────────────────────────────────────────────────────────────
+- name: "velociraptor | Open frontend port (client → server)"
+  community.general.ufw:
+    rule: allow
+    port: "{{ velociraptor_frontend_port }}"
+    proto: tcp
+    src: "10.0.20.0/24"
+
+- name: "velociraptor | Open GUI port (analyst access)"
+  community.general.ufw:
+    rule: allow
+    port: "{{ velociraptor_gui_port }}"
+    proto: tcp
+    src: "10.0.10.0/24"
+
+# ── Deploy pre-built VQL hunt artifacts ──────────────────────────────────────
+- name: "velociraptor | Copy hunt artifact directory"
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../hunts/velociraptor/"
+    dest: /opt/velociraptor/hunts/
+    owner: velociraptor
+    group: velociraptor
+    mode: "0640"
+
+# ── Generate client MSI/config for deployment ────────────────────────────────
+- name: "velociraptor | Generate client config"
+  ansible.builtin.command:
+    cmd: >
+      velociraptor --config /opt/velociraptor/config/server.config.yaml
+      config client
+    creates: /opt/velociraptor/config/client.config.yaml
+  register: velo_client_config
+
+- name: "velociraptor | Write client config"
+  ansible.builtin.copy:
+    content: "{{ velo_client_config.stdout }}"
+    dest: /opt/velociraptor/config/client.config.yaml
+    owner: velociraptor
+    group: velociraptor
+    mode: "0644"
+  when:
+    - velo_client_config is defined
+    - velo_client_config.stdout is defined
+
+- name: "velociraptor | Build Windows client MSI"
+  ansible.builtin.command:
+    cmd: >
+      velociraptor --config /opt/velociraptor/config/server.config.yaml
+      package client --os windows
+      --output /opt/velociraptor/clients/velociraptor-client.msi
+    creates: /opt/velociraptor/clients/velociraptor-client.msi

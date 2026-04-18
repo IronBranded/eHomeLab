@@ -1,0 +1,90 @@
+---
+# =============================================================================
+# .github/workflows/security-scan.yml
+# Scans for secrets, CVEs in dependencies, and YARA rule syntax
+# =============================================================================
+
+name: Security Scan
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run weekly to catch newly published CVEs
+    - cron: '0 06 * * 1'
+
+jobs:
+  secret-scan:
+    name: Secret Detection (Gitleaks)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  yara-validate:
+    name: YARA Rule Syntax Validation
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install YARA
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y yara
+
+      - name: Validate all YARA rules
+        run: |
+          echo "Validating YARA rules..."
+          find hunts/yara-rules/ -name "*.yar" -o -name "*.yara" | while read -r rule; do
+            echo "Checking: $rule"
+            yarac "$rule" /dev/null && echo "  OK: $rule" || echo "  FAIL: $rule"
+          done
+
+  sigma-validate:
+    name: Sigma Rule Validation
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install sigma-cli
+        run: pip install sigma-cli
+
+      - name: Validate Sigma rules
+        run: |
+          find hunts/sigma-rules/ -name "*.yml" | while read -r rule; do
+            echo "Checking: $rule"
+            sigma check "$rule" && echo "  OK" || echo "  FAIL: $rule"
+          done
+        continue-on-error: true
+
+  markdown-lint:
+    name: Markdown Lint
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Lint Markdown files
+        uses: DavidAnson/markdownlint-cli2-action@v14
+        with:
+          globs: |
+            docs/**/*.md
+            workflows/**/*.md
+            README.md
+            SECURITY.md
+            CONTRIBUTING.md

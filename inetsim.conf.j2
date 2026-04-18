@@ -1,0 +1,42 @@
+# =============================================================================
+# INetSim configuration — ECrime Homelab
+# Managed by Ansible — DO NOT edit manually
+# Simulates internet services for malware detonation on VLAN 30
+# =============================================================================
+
+start_service      dns
+start_service      http
+start_service      https
+start_service      ftp
+start_service      ftps
+start_service      smtp
+start_service      smtps
+start_service      pop3
+start_service      pop3s
+start_service      irc
+start_service      ntp
+
+service_bind_address  {{ inetsim_bind_ip }}
+dns_default_ip        {{ inetsim_bind_ip }}
+dns_bind_port         53
+http_bind_port        80
+https_bind_port       443
+ftp_bind_port         21
+smtp_bind_port        25
+pop3_bind_port        110
+
+# Log all connections
+log_dir           /var/log/inetsim
+report_dir        /var/log/inetsim/reports
+data_dir          /var/lib/inetsim
+
+# HTTP responses
+http_fakefiles_dir    /var/lib/inetsim/http/fakefiles
+https_fakefiles_dir   /var/lib/inetsim/http/fakefiles
+
+# TLS — self-signed
+ssl_cert          /etc/inetsim/ssl/server.crt
+ssl_key           /etc/inetsim/ssl/server.key
+
+# Max connections per service
+service_max_childs 10

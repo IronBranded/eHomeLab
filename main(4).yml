@@ -1,0 +1,205 @@
+---
+# =============================================================================
+# Role: sof_elk
+# Deploys SOF-ELK — SANS DFIR-tuned Elastic stack on VLAN 50
+# =============================================================================
+
+# ── SOF-ELK is distributed as a VM image — this role handles post-import setup
+# ── For fresh deploy: import OVA via Proxmox, then run this role.
+# ── For manual: https://github.com/philhagen/sof-elk
+
+# ── System tuning (Elasticsearch requirements) ───────────────────────────────
+- name: "sofelk | Set vm.max_map_count for Elasticsearch"
+  ansible.posix.sysctl:
+    name: vm.max_map_count
+    value: "262144"
+    state: present
+    reload: true
+    sysctl_file: /etc/sysctl.d/99-elasticsearch.conf
+
+- name: "sofelk | Set file descriptor limits for elk user"
+  ansible.builtin.blockinfile:
+    path: /etc/security/limits.conf
+    marker: "# {mark} ANSIBLE MANAGED — SOF-ELK"
+    block: |
+      elk     soft  nofile  65536
+      elk     hard  nofile  65536
+      root    soft  nofile  65536
+      root    hard  nofile  65536
+
+# ── Ensure core ELK services are running ─────────────────────────────────────
+- name: "sofelk | Ensure Elasticsearch is running"
+  ansible.builtin.service:
+    name: elasticsearch
+    state: started
+    enabled: true
+
+- name: "sofelk | Ensure Logstash is running"
+  ansible.builtin.service:
+    name: logstash
+    state: started
+    enabled: true
+
+- name: "sofelk | Ensure Kibana is running"
+  ansible.builtin.service:
+    name: kibana
+    state: started
+    enabled: true
+
+# ── Wait for Elasticsearch to be ready ───────────────────────────────────────
+- name: "sofelk | Wait for Elasticsearch to respond"
+  ansible.builtin.uri:
+    url: "http://localhost:9200/_cluster/health"
+    method: GET
+    status_code: 200
+  register: es_health
+  retries: 30
+  delay: 10
+  until: es_health.status == 200
+
+# ── Deploy custom Logstash pipelines ─────────────────────────────────────────
+- name: "sofelk | Deploy Velociraptor Logstash pipeline"
+  ansible.builtin.template:
+    src: logstash-velociraptor.conf.j2
+    dest: /etc/logstash/conf.d/3100-velociraptor.conf
+    owner: logstash
+    group: logstash
+    mode: "0640"
+  notify: Restart logstash
+
+- name: "sofelk | Deploy CAPE behavioral reports pipeline"
+  ansible.builtin.template:
+    src: logstash-cape.conf.j2
+    dest: /etc/logstash/conf.d/3200-cape.conf
+    owner: logstash
+    group: logstash
+    mode: "0640"
+  notify: Restart logstash
+
+- name: "sofelk | Deploy Windows Sysmon pipeline"
+  ansible.builtin.template:
+    src: logstash-sysmon.conf.j2
+    dest: /etc/logstash/conf.d/3300-sysmon.conf
+    owner: logstash
+    group: logstash
+    mode: "0640"
+  notify: Restart logstash
+
+- name: "sofelk | Deploy TheHive alert pipeline"
+  ansible.builtin.template:
+    src: logstash-thehive.conf.j2
+    dest: /etc/logstash/conf.d/3400-thehive.conf
+    owner: logstash
+    group: logstash
+    mode: "0640"
+  notify: Restart logstash
+
+# ── Logstash input — syslog listener ─────────────────────────────────────────
+- name: "sofelk | Deploy syslog input configuration"
+  ansible.builtin.template:
+    src: logstash-syslog-input.conf.j2
+    dest: /etc/logstash/conf.d/0100-syslog-input.conf
+    owner: logstash
+    group: logstash
+    mode: "0640"
+  notify: Restart logstash
+
+# ── Import custom Kibana dashboards ──────────────────────────────────────────
+- name: "sofelk | Wait for Kibana to be ready"
+  ansible.builtin.uri:
+    url: "http://localhost:5601/api/status"
+    method: GET
+    status_code: 200
+  register: kibana_status
+  retries: 30
+  delay: 10
+  until: kibana_status.status == 200
+
+- name: "sofelk | Copy custom DFIR dashboard files"
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: /tmp/dashboards/
+    owner: root
+    group: root
+    mode: "0644"
+  with_fileglob:
+    - "{{ role_path }}/files/dashboards/*.ndjson"
+
+- name: "sofelk | Import custom dashboards into Kibana"
+  ansible.builtin.uri:
+    url: "http://localhost:5601/api/saved_objects/_import?overwrite=true"
+    method: POST
+    headers:
+      kbn-xsrf: "true"
+    src: "/tmp/dashboards/{{ item | basename }}"
+    status_code: [200, 201]
+  with_fileglob:
+    - "{{ role_path }}/files/dashboards/*.ndjson"
+  register: dashboard_import
+  failed_when:
+    - dashboard_import.status not in [200, 201]
+
+# ── Index lifecycle management — retention policy ─────────────────────────────
+- name: "sofelk | Create ILM policy for log retention"
+  ansible.builtin.uri:
+    url: "http://localhost:9200/_ilm/policy/ecrime-logs-policy"
+    method: PUT
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      policy:
+        phases:
+          hot:
+            min_age: "0ms"
+            actions:
+              rollover:
+                max_size: "50gb"
+                max_age: "30d"
+          warm:
+            min_age: "30d"
+            actions:
+              shrink:
+                number_of_shards: 1
+              forcemerge:
+                max_num_segments: 1
+          delete:
+            min_age: "{{ sofelk_retention_days }}d"
+            actions:
+              delete: {}
+    status_code: [200, 201]
+
+# ── Firewall ──────────────────────────────────────────────────────────────────
+- name: "sofelk | Allow Elasticsearch from analysis VLANs"
+  community.general.ufw:
+    rule: allow
+    port: "9200"
+    proto: tcp
+    src: "{{ item }}"
+  loop:
+    - "10.0.20.0/24"
+    - "10.0.40.0/24"
+
+- name: "sofelk | Allow Kibana from management + analysis VLANs"
+  community.general.ufw:
+    rule: allow
+    port: "5601"
+    proto: tcp
+    src: "{{ item }}"
+  loop:
+    - "10.0.10.0/24"
+    - "10.0.20.0/24"
+
+- name: "sofelk | Allow syslog ingest from all VLANs"
+  community.general.ufw:
+    rule: allow
+    port: "{{ sofelk_syslog_port }}"
+    proto: tcp
+    src: "10.0.0.0/8"
+
+- name: "sofelk | Allow Beats input from all VLANs"
+  community.general.ufw:
+    rule: allow
+    port: "5044"
+    proto: tcp
+    src: "10.0.0.0/8"

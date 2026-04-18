@@ -1,0 +1,53 @@
+// =============================================================================
+// Hunt: Windows Persistence Mechanisms
+// Detects common persistence techniques across all enrolled endpoints
+// MITRE ATT&CK: T1547, T1053, T1543, T1546, T1574
+// =============================================================================
+
+// ── Run Keys ──────────────────────────────────────────────────────────────────
+LET RunKeys = SELECT Key.FullPath AS RegistryPath,
+                     Name, Data.value AS Value,
+                     Key.LastWriteTime AS LastModified,
+                     Fqdn, ClientId
+FROM Artifact.Windows.Registry.NTUser(KeyGlob="{HKEY_USERS}\\*\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\**")
+
+// ── Scheduled Tasks ────────────────────────────────────────────────────────────
+LET ScheduledTasks = SELECT Name, Command, Arguments,
+                            TriggersXML, Enabled,
+                            Fqdn, ClientId
+FROM Artifact.Windows.System.ScheduledTasks()
+WHERE Enabled = TRUE
+  AND Command != null
+  AND (Command =~ "(?i)(powershell|cmd|wscript|cscript|mshta|regsvr32|rundll32|certutil)"
+       OR Arguments =~ "(?i)(-enc|-e |bypass|hidden|downloadstring|iex)")
+
+// ── Services ───────────────────────────────────────────────────────────────────
+LET SuspiciousServices = SELECT Name, DisplayName, PathName,
+                                StartMode, State, StartName,
+                                Fqdn, ClientId
+FROM Artifact.Windows.System.Services()
+WHERE StartMode IN ("Auto", "Boot", "System")
+  AND (PathName =~ "(?i)(temp|appdata|users\\\\public|programdata)"
+       OR PathName =~ "(?i)(powershell|cmd|wscript|mshta|regsvr32|rundll32)")
+
+// ── WMI Subscriptions ──────────────────────────────────────────────────────────
+LET WMISubscriptions = SELECT FilterName, ConsumerName,
+                              ConsumerCommand, SubscriptionQuery,
+                              Fqdn, ClientId
+FROM Artifact.Windows.Persistence.PermanentWMIEvents()
+
+// ── Startup Folders ────────────────────────────────────────────────────────────
+LET StartupItems = SELECT FullPath, Name, Mtime, Size,
+                          Fqdn, ClientId
+FROM Artifact.Windows.Sys.StartupItems()
+
+// ── Combine and return all findings ───────────────────────────────────────────
+SELECT *, "RunKey" AS PersistenceType FROM RunKeys
+UNION ALL
+SELECT *, "ScheduledTask" AS PersistenceType FROM ScheduledTasks
+UNION ALL
+SELECT *, "SuspiciousService" AS PersistenceType FROM SuspiciousServices
+UNION ALL
+SELECT *, "WMISubscription" AS PersistenceType FROM WMISubscriptions
+UNION ALL
+SELECT *, "StartupItem" AS PersistenceType FROM StartupItems

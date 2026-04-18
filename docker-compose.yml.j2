@@ -1,0 +1,105 @@
+---
+# =============================================================================
+# TheHive 4 + Cortex — Docker Compose Stack
+# ECrime Homelab — VLAN 40 (10.0.40.20 / 10.0.40.21)
+# Managed by Ansible — DO NOT edit manually
+# =============================================================================
+
+version: "3.9"
+
+networks:
+  thehive-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+
+volumes:
+  elasticsearch_data:
+  thehive_data:
+  thehive_index:
+  cortex_jobs:
+
+services:
+
+  # ── Elasticsearch (backend for TheHive 4) ──────────────────────────────────
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.15
+    container_name: thehive-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+      - cluster.name=thehive
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - thehive-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  # ── TheHive 4 ──────────────────────────────────────────────────────────────
+  thehive:
+    image: strangebee/thehive:{{ thehive_version }}
+    container_name: thehive
+    restart: unless-stopped
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    ports:
+      - "{{ thehive_port }}:9000"
+    volumes:
+      - "{{ thehive_config_path }}/application.conf:/etc/thehive/application.conf:ro"
+      - thehive_data:/opt/thp/thehive/data
+      - thehive_index:/opt/thp/thehive/index
+    networks:
+      - thehive-net
+    environment:
+      - TH_NO_CONFIG=true
+    command:
+      - --config-file
+      - /etc/thehive/application.conf
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+
+  # ── Cortex ─────────────────────────────────────────────────────────────────
+  cortex:
+    image: thehiveproject/cortex:{{ cortex_version }}
+    container_name: cortex
+    restart: unless-stopped
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    ports:
+      - "{{ cortex_port }}:9001"
+    volumes:
+      - "{{ cortex_config_path }}/application.conf:/etc/cortex/application.conf:ro"
+      - cortex_jobs:/opt/cortex/jobs
+      - "{{ cortex_neurons_path }}:/opt/cortex/neurons:ro"
+      - /var/run/docker.sock:/var/run/docker.sock  # Cortex spawns analyzer containers
+    networks:
+      - thehive-net
+    environment:
+      - JOB_DIRECTORY=/opt/cortex/jobs
+    command:
+      - --config-file
+      - /etc/cortex/application.conf
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9001/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 10

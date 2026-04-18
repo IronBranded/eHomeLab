@@ -1,0 +1,34 @@
+# =============================================================================
+# WireGuard Client Configuration — Analyst Workstation
+# Connects to ECrime Homelab via WireGuard VPN
+# =============================================================================
+# SETUP (analyst workstation):
+#   1. Install WireGuard: https://www.wireguard.com/install/
+#   2. Generate client keys:
+#      wg genkey | tee client-private.key | wg pubkey > client-public.key
+#   3. Send client-public.key to lab admin — they add it as a [Peer] on server
+#   4. Fill in REPLACE_ values below
+#   5. Import: sudo wg-quick up ./analyst-client.conf
+# =============================================================================
+
+[Interface]
+# Your assigned tunnel IP (assigned by lab admin)
+Address    = 10.0.10.100/32
+PrivateKey = REPLACE_CLIENT_PRIVATE_KEY
+DNS        = 10.0.10.1
+
+[Peer]
+# ECrime Homelab WireGuard server
+PublicKey  = REPLACE_SERVER_PUBLIC_KEY
+Endpoint   = REPLACE_YOUR_LAB_PUBLIC_IP_OR_DDNS:51820
+
+# Route all lab subnets through the tunnel
+AllowedIPs = 10.0.10.0/24, \
+             10.0.20.0/24, \
+             10.0.30.0/24, \
+             10.0.40.0/24, \
+             10.0.50.0/24, \
+             10.0.60.0/24
+
+# Keep tunnel alive through NAT
+PersistentKeepalive = 25

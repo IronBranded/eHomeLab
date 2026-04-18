@@ -1,0 +1,185 @@
+---
+# =============================================================================
+# Role: crypto_tracing
+# Deploys GraphSense + BlockSci + SpiderFoot — VLAN 20 (10.0.20.60)
+# All MIT / Apache 2.0 licensed — no paid API keys required
+# =============================================================================
+
+- name: "crypto | Install system dependencies"
+  ansible.builtin.apt:
+    name:
+      - python3
+      - python3-pip
+      - python3-venv
+      - git
+      - curl
+      - wget
+      - build-essential
+      - cmake
+      - libboost-all-dev
+      - libssl-dev
+      - libjsoncpp-dev
+      - libsparsehash-dev
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+      - nfs-common
+      - jq
+    state: present
+    update_cache: true
+
+- name: "crypto | Ensure Docker is running"
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+
+# ── Analyst user + evidence mount ─────────────────────────────────────────────
+- name: "crypto | Create analyst user"
+  ansible.builtin.user:
+    name: "{{ crypto_analyst_user }}"
+    shell: /bin/bash
+    groups: sudo,docker
+    append: true
+    create_home: true
+
+- name: "crypto | Create evidence mount point"
+  ansible.builtin.file:
+    path: /mnt/evidence
+    state: directory
+    owner: "{{ crypto_analyst_user }}"
+    group: "{{ crypto_analyst_user }}"
+    mode: "0750"
+
+- name: "crypto | Mount evidence NAS read-only"
+  ansible.posix.mount:
+    path: /mnt/evidence
+    src: "{{ nas_ip }}:{{ nas_export_path }}"
+    fstype: nfs
+    opts: "ro,soft,intr,timeo=30,retrans=3,nfsvers=4"
+    state: mounted
+
+# ── Directory structure ────────────────────────────────────────────────────────
+- name: "crypto | Create directory structure"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ crypto_analyst_user }}"
+    group: "{{ crypto_analyst_user }}"
+    mode: "0750"
+  loop:
+    - /opt/crypto
+    - /opt/crypto/graphsense
+    - /opt/crypto/blocksci
+    - /opt/crypto/spiderfoot
+    - /opt/crypto/blockchain-data
+    - /opt/crypto/output
+
+# ── SpiderFoot (OSINT + crypto transforms) ────────────────────────────────────
+- name: "crypto | Clone SpiderFoot"
+  ansible.builtin.git:
+    repo: "https://github.com/smicallef/spiderfoot.git"
+    dest: /opt/crypto/spiderfoot
+    version: master
+    depth: 1
+    force: false
+
+- name: "crypto | Create SpiderFoot virtualenv"
+  ansible.builtin.command:
+    cmd: python3 -m venv /opt/crypto/spiderfoot/venv
+    creates: /opt/crypto/spiderfoot/venv/bin/activate
+
+- name: "crypto | Install SpiderFoot dependencies"
+  ansible.builtin.pip:
+    requirements: /opt/crypto/spiderfoot/requirements.txt
+    virtualenv: /opt/crypto/spiderfoot/venv
+    state: present
+
+- name: "crypto | Deploy SpiderFoot systemd service"
+  ansible.builtin.template:
+    src: spiderfoot.service.j2
+    dest: /etc/systemd/system/spiderfoot.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart spiderfoot
+
+- name: "crypto | Enable and start SpiderFoot"
+  ansible.builtin.systemd:
+    name: spiderfoot
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# ── GraphSense (Docker-based) ──────────────────────────────────────────────────
+- name: "crypto | Clone GraphSense REST API"
+  ansible.builtin.git:
+    repo: "https://github.com/graphsense/graphsense-REST.git"
+    dest: /opt/crypto/graphsense
+    version: master
+    depth: 1
+    force: false
+
+- name: "crypto | Deploy GraphSense Docker Compose"
+  ansible.builtin.template:
+    src: graphsense-compose.yml.j2
+    dest: /opt/crypto/graphsense/docker-compose.yml
+    owner: "{{ crypto_analyst_user }}"
+    group: "{{ crypto_analyst_user }}"
+    mode: "0640"
+
+# ── BlockSci ──────────────────────────────────────────────────────────────────
+- name: "crypto | Clone BlockSci"
+  ansible.builtin.git:
+    repo: "https://github.com/citp/BlockSci.git"
+    dest: /opt/crypto/blocksci
+    version: master
+    recursive: true
+    force: false
+
+- name: "crypto | Install BlockSci Python library"
+  ansible.builtin.pip:
+    name: blocksci
+    state: present
+    executable: pip3
+  failed_when: false   # BlockSci build can fail on some kernel versions
+
+# ── Useful Python blockchain libraries ────────────────────────────────────────
+- name: "crypto | Install blockchain analysis Python packages"
+  ansible.builtin.pip:
+    name:
+      - bitcoin
+      - web3
+      - eth-brownie
+      - pyethereum
+      - requests
+      - pandas
+      - matplotlib
+      - networkx
+      - jupyter
+    state: present
+    executable: pip3
+
+# ── Wallet pivot cheat-sheet ──────────────────────────────────────────────────
+- name: "crypto | Deploy wallet pivot templates"
+  ansible.builtin.copy:
+    src: "{{ role_path }}/files/wallet-pivot-templates.md"
+    dest: /opt/crypto/wallet-pivot-templates.md
+    owner: "{{ crypto_analyst_user }}"
+    group: "{{ crypto_analyst_user }}"
+    mode: "0644"
+  failed_when: false
+
+# ── Firewall ──────────────────────────────────────────────────────────────────
+- name: "crypto | Allow SpiderFoot UI from management + analysis VLANs"
+  community.general.ufw:
+    rule: allow
+    port: "{{ spiderfoot_port }}"
+    proto: tcp
+    src: "{{ item }}"
+  loop:
+    - "10.0.10.0/24"
+    - "10.0.20.0/24"

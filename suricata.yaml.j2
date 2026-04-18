@@ -1,0 +1,73 @@
+%YAML 1.1
+---
+# =============================================================================
+# Suricata configuration — ECrime Homelab NSM sensor
+# Managed by Ansible — DO NOT edit manually
+# =============================================================================
+
+vars:
+  address-groups:
+    HOME_NET: "[10.0.0.0/8,192.168.100.0/24]"
+    EXTERNAL_NET: "!$HOME_NET"
+    HTTP_SERVERS: "$HOME_NET"
+    SMTP_SERVERS: "$HOME_NET"
+    SQL_SERVERS: "$HOME_NET"
+    DNS_SERVERS: "$HOME_NET"
+    TELNET_SERVERS: "$HOME_NET"
+    AIM_SERVERS: "$EXTERNAL_NET"
+    DC_SERVERS: "$HOME_NET"
+    DNP3_SERVER: "$HOME_NET"
+    DNP3_CLIENT: "$HOME_NET"
+    MODBUS_CLIENT: "$HOME_NET"
+    MODBUS_SERVER: "$HOME_NET"
+    ENIP_CLIENT: "$HOME_NET"
+    ENIP_SERVER: "$HOME_NET"
+
+af-packet:
+  - interface: {{ nsm_span_interface }}
+    cluster-id: 99
+    cluster-type: cluster_flow
+    defrag: yes
+    use-mmap: yes
+    tpacket-v3: yes
+
+outputs:
+  - fast:
+      enabled: yes
+      filename: /var/log/suricata/fast.log
+  - eve-log:
+      enabled: yes
+      filetype: regular
+      filename: /var/log/suricata/eve.json
+      types:
+        - alert:
+            metadata: yes
+            tagged-packets: yes
+        - anomaly
+        - http:
+            extended: yes
+        - dns:
+            query: yes
+            answer: yes
+        - tls:
+            extended: yes
+        - files:
+            force-magic: yes
+            force-hash: [md5, sha256]
+        - ssh
+        - flow
+        - netflow
+
+default-rule-path: /etc/suricata/rules
+rule-files:
+  - suricata.rules
+
+logging:
+  default-log-level: notice
+  outputs:
+    - console:
+        enabled: yes
+    - syslog:
+        enabled: yes
+        facility: local5
+        level: info

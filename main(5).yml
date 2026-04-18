@@ -1,0 +1,110 @@
+---
+# =============================================================================
+# Role: opencti
+# Deploys OpenCTI — structured threat intelligence platform
+# VLAN 40 (10.0.40.11) — Apache 2.0 licensed
+# =============================================================================
+
+- name: "opencti | Install Docker and dependencies"
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+      - curl
+      - gnupg
+    state: present
+    update_cache: true
+
+- name: "opencti | Ensure Docker is running"
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+
+# ── Directory structure ───────────────────────────────────────────────────────
+- name: "opencti | Create directory structure"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: docker
+    mode: "0750"
+  loop:
+    - /opt/opencti
+    - /opt/opencti/data
+    - /opt/opencti/config
+    - /opt/opencti/elasticsearch
+    - /opt/opencti/s3
+    - /opt/opencti/redis
+    - /opt/opencti/rabbitmq
+
+# ── ElasticSearch vm.max_map_count ───────────────────────────────────────────
+- name: "opencti | Set vm.max_map_count for Elasticsearch"
+  ansible.posix.sysctl:
+    name: vm.max_map_count
+    value: "1048575"
+    state: present
+    reload: true
+    sysctl_file: /etc/sysctl.d/99-opencti.conf
+
+# ── Deploy Docker Compose stack ───────────────────────────────────────────────
+- name: "opencti | Deploy Docker Compose file"
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: /opt/opencti/docker-compose.yml
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart opencti stack
+
+- name: "opencti | Pull OpenCTI images"
+  community.docker.docker_compose:
+    project_src: /opt/opencti
+    pull: true
+    state: present
+
+- name: "opencti | Start OpenCTI stack"
+  community.docker.docker_compose:
+    project_src: /opt/opencti
+    state: present
+
+# ── Wait for platform to initialise ──────────────────────────────────────────
+- name: "opencti | Wait for OpenCTI API to be ready"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ opencti_port }}/graphql"
+    method: GET
+    status_code: [200, 400]
+  register: opencti_ready
+  retries: 40
+  delay: 15
+  until: opencti_ready.status in [200, 400]
+
+# ── Systemd wrapper ───────────────────────────────────────────────────────────
+- name: "opencti | Deploy systemd service wrapper"
+  ansible.builtin.template:
+    src: opencti-stack.service.j2
+    dest: /etc/systemd/system/opencti-stack.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: "opencti | Enable opencti-stack on boot"
+  ansible.builtin.systemd:
+    name: opencti-stack
+    enabled: true
+    daemon_reload: true
+
+# ── Firewall ──────────────────────────────────────────────────────────────────
+- name: "opencti | Allow OpenCTI from intel + analysis VLANs"
+  community.general.ufw:
+    rule: allow
+    port: "{{ opencti_port }}"
+    proto: tcp
+    src: "{{ item }}"
+  loop:
+    - "10.0.20.0/24"
+    - "10.0.40.0/24"
+    - "10.0.10.0/24"

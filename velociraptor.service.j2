@@ -1,0 +1,28 @@
+[Unit]
+Description=Velociraptor EDR Server — ECrime Homelab
+Documentation=https://docs.velociraptor.app
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=velociraptor
+Group=velociraptor
+ExecStart=/usr/local/bin/velociraptor \
+  --config /opt/velociraptor/config/server.config.yaml \
+  frontend -v
+Restart=on-failure
+RestartSec=10
+LimitNOFILE=65536
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths={{ velociraptor_datastore }} /opt/velociraptor/logs
+ProtectHome=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

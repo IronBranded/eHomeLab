@@ -1,0 +1,67 @@
+// =============================================================================
+// Hunt: Ransomware Indicators
+// Early-stage ransomware detection — encryption onset, shadow deletion, C2
+// MITRE ATT&CK: T1490, T1485, T1486, T1489
+// =============================================================================
+
+// ── Volume shadow copy deletion ────────────────────────────────────────────────
+LET ShadowDelete = SELECT TimeCreated, EventID,
+                           CommandLine, ProcessName,
+                           SubjectUserName, Fqdn, ClientId
+FROM Artifact.Windows.EventLogs.EvtxHunter(
+    EvtxGlob="C:\\Windows\\System32\\winevt\\Logs\\Security.evtx",
+    IdFilter=[4688]
+)
+WHERE CommandLine =~ "(?i)(vssadmin|wmic|wbadmin|bcdedit|diskshadow)"
+  AND CommandLine =~ "(?i)(delete|resize|shadowcopy|catalog|recoveryenabled)"
+
+// ── Rapid file modification (mass rename/encrypt) ────────────────────────────
+LET RapidFileChanges = SELECT FullPath, Mtime, Atime, Ctime, Size,
+                              Fqdn, ClientId
+FROM Artifact.Windows.Search.FileFinder(
+    SearchFilesGlob="C:\\Users\\**",
+    ModifiedAfter=timestamp(epoch=now() - 3600)
+)
+WHERE FullPath =~ "(?i)\\.(locked|encrypted|enc|crypt|crypto|ryk|revil|[a-z0-9]{5,8})$"
+
+// ── Ransom note file detection ─────────────────────────────────────────────────
+LET RansomNotes = SELECT FullPath, Size, Mtime,
+                         Fqdn, ClientId
+FROM Artifact.Windows.Search.FileFinder(
+    SearchFilesGlob="C:\\Users\\**",
+    ModifiedAfter=timestamp(epoch=now() - 86400)
+)
+WHERE Name =~ "(?i)(readme|decrypt|recover|how_to|restore|ransom|instructions).*\\.(txt|html|hta)$"
+
+// ── Service stop commands (anti-recovery) ────────────────────────────────────
+LET ServiceStop = SELECT TimeCreated, EventID,
+                          CommandLine, ProcessName,
+                          Fqdn, ClientId
+FROM Artifact.Windows.EventLogs.EvtxHunter(
+    EvtxGlob="C:\\Windows\\System32\\winevt\\Logs\\Security.evtx",
+    IdFilter=[4688]
+)
+WHERE CommandLine =~ "(?i)(net stop|sc stop|taskkill)"
+  AND CommandLine =~ "(?i)(mssql|mysql|backup|veeam|acronis|exchange|sql)"
+
+// ── PowerShell download + execute patterns ────────────────────────────────────
+LET PSDownload = SELECT TimeCreated, EventID,
+                         CommandLine, SubjectUserName,
+                         Fqdn, ClientId
+FROM Artifact.Windows.EventLogs.EvtxHunter(
+    EvtxGlob="C:\\Windows\\System32\\winevt\\Logs\\Security.evtx",
+    IdFilter=[4688]
+)
+WHERE CommandLine =~ "(?i)powershell"
+  AND CommandLine =~ "(?i)(downloadstring|invoke-expression|iex|downloadfile|webclient|bitstransfer)"
+  AND CommandLine =~ "(?i)(-enc|-e |-encoded|-nop|-noninteractive|-windowstyle hidden)"
+
+SELECT *, "ShadowDeletion" AS Technique FROM ShadowDelete
+UNION ALL
+SELECT *, "MassEncryption" AS Technique FROM RapidFileChanges
+UNION ALL
+SELECT *, "RansomNote" AS Technique FROM RansomNotes
+UNION ALL
+SELECT *, "ServiceStopping" AS Technique FROM ServiceStop
+UNION ALL
+SELECT *, "PSDownloadExec" AS Technique FROM PSDownload

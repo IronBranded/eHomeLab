@@ -1,0 +1,64 @@
+# =============================================================================
+# Logstash — Syslog + Beats input pipeline
+# Receives from ALL VLANs — managed by Ansible
+# =============================================================================
+
+input {
+
+  # ── Syslog TCP (all Linux hosts via rsyslog) ────────────────────────────────
+  tcp {
+    port  => {{ sofelk_syslog_port }}
+    codec => plain { charset => "UTF-8" }
+    type  => "syslog"
+    tags  => ["syslog-tcp"]
+  }
+
+  # ── Syslog UDP fallback ───────────────────────────────────────────────────
+  udp {
+    port  => {{ sofelk_syslog_port }}
+    codec => plain { charset => "UTF-8" }
+    type  => "syslog"
+    tags  => ["syslog-udp"]
+  }
+
+  # ── Beats (Filebeat / Winlogbeat) ─────────────────────────────────────────
+  beats {
+    port => {{ sofelk_beats_port }}
+    type => "beats"
+    tags => ["beats"]
+  }
+
+}
+
+filter {
+  # Parse standard syslog format
+  if "syslog" in [tags] {
+    grok {
+      match => {
+        "message" => "%{SYSLOGTIMESTAMP:syslog_timestamp} %{SYSLOGHOST:syslog_host} %{DATA:syslog_program}(?:\[%{POSIX_OCT:syslog_pid}\])?: %{GREEDYDATA:syslog_message}"
+      }
+      overwrite => ["message"]
+    }
+    date {
+      match      => ["syslog_timestamp", "MMM  d HH:mm:ss", "MMM dd HH:mm:ss"]
+      target     => "@timestamp"
+      timezone   => "UTC"
+    }
+  }
+
+  # Enrich with VLAN/source context
+  mutate {
+    add_field => {
+      "lab"         => "{{ lab_name }}"
+      "environment" => "ecrime-homelab"
+    }
+  }
+}
+
+output {
+  elasticsearch {
+    hosts    => ["localhost:{{ sofelk_es_port }}"]
+    index    => "{{ sofelk_index_prefix }}-syslog-%{+YYYY.MM.dd}"
+    template_overwrite => false
+  }
+}

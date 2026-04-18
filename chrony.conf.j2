@@ -1,0 +1,28 @@
+# =============================================================================
+# chrony.conf — ECrime Homelab NTP configuration
+# Managed by Ansible — UTC time sync is critical for forensic log correlation
+# =============================================================================
+
+# ── NTP servers ───────────────────────────────────────────────────────────────
+{% for server in chrony_ntp_servers %}
+server {{ server }} iburst
+{% endfor %}
+
+# ── Source selection ──────────────────────────────────────────────────────────
+minsources 2
+maxdistance 1.5
+
+# ── Clock discipline ──────────────────────────────────────────────────────────
+makestep 1.0 3
+rtcsync
+
+# ── Logging (critical — timestamps must be accurate for forensics) ────────────
+logdir /var/log/chrony
+log measurements statistics tracking
+
+# ── Restrict access — only allow local queries ────────────────────────────────
+bindcmdaddress 127.0.0.1
+cmdport 0
+
+# ── Drift file ────────────────────────────────────────────────────────────────
+driftfile /var/lib/chrony/drift

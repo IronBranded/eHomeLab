@@ -1,0 +1,187 @@
+---
+# =============================================================================
+# Role: zeek_suricata
+# Deploys Zeek + Suricata network sensor — VLAN 20 (10.0.20.31)
+# eth0 = management (10.0.20.31), eth1 = promiscuous span/mirror interface
+# =============================================================================
+
+- name: "nsm | Install dependencies"
+  ansible.builtin.apt:
+    name:
+      - cmake
+      - make
+      - gcc
+      - g++
+      - flex
+      - bison
+      - libpcap-dev
+      - libssl-dev
+      - python3-dev
+      - python3-pip
+      - swig
+      - zlib1g-dev
+      - libmaxminddb-dev
+      - mmdb-bin
+      - curl
+      - gnupg
+      - jq
+    state: present
+    update_cache: true
+
+# ── Zeek ──────────────────────────────────────────────────────────────────────
+- name: "nsm | Add Zeek repository key"
+  ansible.builtin.apt_key:
+    url: "https://download.opensuse.org/repositories/security:/zeek/xUbuntu_22.04/Release.key"
+    state: present
+
+- name: "nsm | Add Zeek repository"
+  ansible.builtin.apt_repository:
+    repo: "deb http://download.opensuse.org/repositories/security:/zeek/xUbuntu_22.04/ /"
+    state: present
+    filename: zeek
+
+- name: "nsm | Install Zeek LTS"
+  ansible.builtin.apt:
+    name: zeek-lts
+    state: present
+    update_cache: true
+
+- name: "nsm | Add Zeek to PATH"
+  ansible.builtin.lineinfile:
+    path: /etc/environment
+    regexp: "^PATH="
+    line: 'PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/zeek/bin"'
+
+- name: "nsm | Deploy Zeek node.cfg"
+  ansible.builtin.template:
+    src: zeek-node.cfg.j2
+    dest: /opt/zeek/etc/node.cfg
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart zeek
+
+- name: "nsm | Deploy Zeek networks.cfg"
+  ansible.builtin.template:
+    src: zeek-networks.cfg.j2
+    dest: /opt/zeek/etc/networks.cfg
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart zeek
+
+- name: "nsm | Deploy Zeek local.zeek policy"
+  ansible.builtin.template:
+    src: zeek-local.zeek.j2
+    dest: /opt/zeek/share/zeek/site/local.zeek
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart zeek
+
+- name: "nsm | Deploy Zeek systemd service"
+  ansible.builtin.template:
+    src: zeek.service.j2
+    dest: /etc/systemd/system/zeek.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart zeek
+
+# ── Suricata ──────────────────────────────────────────────────────────────────
+- name: "nsm | Add Suricata PPA"
+  ansible.builtin.apt_repository:
+    repo: "ppa:oisf/suricata-stable"
+    state: present
+
+- name: "nsm | Install Suricata"
+  ansible.builtin.apt:
+    name: suricata
+    state: present
+    update_cache: true
+
+- name: "nsm | Deploy Suricata configuration"
+  ansible.builtin.template:
+    src: suricata.yaml.j2
+    dest: /etc/suricata/suricata.yaml
+    owner: root
+    group: suricata
+    mode: "0640"
+  notify: Restart suricata
+
+- name: "nsm | Create Suricata rules directory"
+  ansible.builtin.file:
+    path: /etc/suricata/rules
+    state: directory
+    owner: root
+    group: suricata
+    mode: "0750"
+
+- name: "nsm | Update Suricata rules (suricata-update)"
+  ansible.builtin.command:
+    cmd: suricata-update
+  changed_when: true
+
+- name: "nsm | Enable and start Suricata"
+  ansible.builtin.service:
+    name: suricata
+    state: started
+    enabled: true
+
+# ── Promiscuous mode on span interface ────────────────────────────────────────
+- name: "nsm | Deploy span interface systemd-networkd config"
+  ansible.builtin.template:
+    src: span-interface.network.j2
+    dest: "/etc/systemd/network/10-{{ nsm_span_interface }}.network"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart networkd
+
+- name: "nsm | Set span interface promiscuous at boot"
+  ansible.builtin.template:
+    src: promisc.service.j2
+    dest: /etc/systemd/system/promisc.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Enable promisc service
+
+# ── Filebeat — ship Zeek + Suricata logs to SOF-ELK ──────────────────────────
+- name: "nsm | Install Filebeat"
+  ansible.builtin.apt:
+    deb: "https://artifacts.elastic.co/downloads/beats/filebeat/filebeat-{{ filebeat_version }}-amd64.deb"
+    state: present
+
+- name: "nsm | Deploy Filebeat configuration"
+  ansible.builtin.template:
+    src: filebeat.yml.j2
+    dest: /etc/filebeat/filebeat.yml
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart filebeat
+
+- name: "nsm | Enable Filebeat Zeek module"
+  ansible.builtin.command:
+    cmd: filebeat modules enable zeek suricata
+  changed_when: false
+
+- name: "nsm | Enable and start Filebeat"
+  ansible.builtin.service:
+    name: filebeat
+    state: started
+    enabled: true
+
+# ── Firewall — sensor is receive-only ────────────────────────────────────────
+- name: "nsm | Allow Filebeat egress to SOF-ELK"
+  community.general.ufw:
+    rule: allow
+    direction: out
+    port: "{{ sofelk_beats_port }}"
+    proto: tcp
+    dest: "{{ sofelk_ip }}"

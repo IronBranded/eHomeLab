@@ -1,0 +1,38 @@
+# =============================================================================
+# WireGuard Server Configuration — ECrime Homelab
+# Server IP: 10.0.10.20 (VLAN 10 — Management)
+# =============================================================================
+# SETUP:
+#   1. Generate keys: wg genkey | tee server-private.key | wg pubkey > server-public.key
+#   2. Replace REPLACE_SERVER_PRIVATE_KEY with contents of server-private.key
+#   3. Add one [Peer] block per analyst — replace REPLACE_CLIENT_PUBLIC_KEY
+#   4. Never commit this file with real keys — keys/ dir is in .gitignore
+#
+# Apply: wg-quick up wg0
+# Status: wg show wg0
+# =============================================================================
+
+[Interface]
+# WireGuard listens on VLAN 10 management interface
+Address    = 10.0.10.20/24
+ListenPort = 51820
+PrivateKey = REPLACE_SERVER_PRIVATE_KEY
+
+# NAT routing — analysts connect and can reach all VLANs via this tunnel
+PostUp   = iptables -A FORWARD -i %i -j ACCEPT; \
+           iptables -A FORWARD -o %i -j ACCEPT; \
+           iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+PostDown = iptables -D FORWARD -i %i -j ACCEPT; \
+           iptables -D FORWARD -o %i -j ACCEPT; \
+           iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
+
+# ── Analyst Peer 1 (replace with your analyst's public key) ──────────────────
+[Peer]
+# Analyst: REPLACE_ANALYST_NAME
+PublicKey  = REPLACE_CLIENT_PUBLIC_KEY
+AllowedIPs = 10.0.10.100/32
+
+# ── Analyst Peer 2 ────────────────────────────────────────────────────────────
+# [Peer]
+# PublicKey  = REPLACE_CLIENT_PUBLIC_KEY_2
+# AllowedIPs = 10.0.10.101/32

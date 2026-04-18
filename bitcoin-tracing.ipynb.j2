@@ -1,0 +1,103 @@
+{
+ "nbformat": 4,
+ "nbformat_minor": 5,
+ "metadata": {
+  "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
+  "language_info": {"name": "python", "version": "3.10.0"}
+ },
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": ["# ECrime Homelab — Bitcoin Tracing Starter\n", "Cluster wallet addresses, trace transaction flows, pivot to exchange attribution.\n\n", "**Evidence path:** `/mnt/evidence/cases/<case_id>/`\n\n", "> Always work read-only from the evidence NAS. Write outputs to `/opt/crypto/output/`."]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import blocksci\n",
+    "import pandas as pd\n",
+    "import matplotlib.pyplot as plt\n",
+    "import networkx as nx\n",
+    "from datetime import datetime\n",
+    "\n",
+    "# Configuration\n",
+    "CASE_ID     = 'CHANGE_ME'\n",
+    "TARGET_ADDR = 'CHANGE_ME'\n",
+    "CHAIN_DIR   = '/opt/crypto/data/bitcoin'\n",
+    "OUTPUT_DIR  = f'/opt/crypto/output/{CASE_ID}'\n",
+    "\n",
+    "import os\n",
+    "os.makedirs(OUTPUT_DIR, exist_ok=True)\n",
+    "print(f'Case: {CASE_ID} | Output: {OUTPUT_DIR}')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Load blockchain data\n",
+    "chain = blocksci.Blockchain(CHAIN_DIR)\n",
+    "print(f'Chain loaded. Block height: {chain.blocks[-1].height}')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Look up target address\n",
+    "addr = chain.address_from_string(TARGET_ADDR)\n",
+    "print(f'Address: {addr}')\n",
+    "print(f'Balance: {addr.balance() / 1e8:.8f} BTC')\n",
+    "print(f'Total received: {addr.total_received() / 1e8:.8f} BTC')\n",
+    "print(f'Transaction count: {len(addr.txes.to_list())}')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Build transaction dataframe\n",
+    "txes = []\n",
+    "for tx in addr.txes.to_list():\n",
+    "    txes.append({\n",
+    "        'txid':      str(tx.hash),\n",
+    "        'block':     tx.block_height,\n",
+    "        'timestamp': datetime.utcfromtimestamp(tx.block_time).isoformat(),\n",
+    "        'value_btc': tx.output_value / 1e8,\n",
+    "        'fee_sat':   tx.fee,\n",
+    "        'inputs':    tx.input_count,\n",
+    "        'outputs':   tx.output_count,\n",
+    "    })\n",
+    "df = pd.DataFrame(txes)\n",
+    "df.to_csv(f'{OUTPUT_DIR}/transactions.csv', index=False)\n",
+    "print(f'Saved {len(df)} transactions to {OUTPUT_DIR}/transactions.csv')\n",
+    "df.head()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Common-input-ownership heuristic — cluster co-spent inputs\n",
+    "cluster_manager = blocksci.cluster.ClusterManager.create_clustering(\n",
+    "    '/opt/crypto/data/bitcoin-clusters', chain)\n",
+    "cluster = cluster_manager.cluster_with_address(addr)\n",
+    "print(f'Cluster size: {cluster.size()} addresses')\n",
+    "cluster_addrs = [str(a) for a in cluster.addresses.to_list()]\n",
+    "pd.Series(cluster_addrs).to_csv(f'{OUTPUT_DIR}/cluster-addresses.csv', index=False)\n",
+    "print(f'Cluster addresses saved to {OUTPUT_DIR}/cluster-addresses.csv')"
+   ]
+  }
+ ]
+}

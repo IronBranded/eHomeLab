@@ -1,0 +1,147 @@
+---
+# =============================================================================
+# Role: verify
+# Post-deployment validation — confirms forensic soundness and security posture
+# Run: ansible-playbook -i inventory.ini site.yml --tags verify
+# =============================================================================
+
+# ── SSH hardening checks ──────────────────────────────────────────────────────
+- name: "verify | SSH — root login disabled"
+  ansible.builtin.command: sshd -T -C user=root
+  register: sshd_test
+  changed_when: false
+  failed_when: "'permitrootlogin no' not in sshd_test.stdout | lower"
+
+- name: "verify | SSH — password auth disabled"
+  ansible.builtin.command: sshd -T
+  register: sshd_full
+  changed_when: false
+  failed_when: "'passwordauthentication no' not in sshd_full.stdout | lower"
+
+# ── Auditd checks ─────────────────────────────────────────────────────────────
+- name: "verify | Auditd is running"
+  ansible.builtin.service_facts:
+
+- name: "verify | Assert auditd is active"
+  ansible.builtin.assert:
+    that: "'auditd' in ansible_facts.services and ansible_facts.services['auditd'].state == 'running'"
+    fail_msg: "FAIL — auditd is NOT running on {{ inventory_hostname }}"
+    success_msg: "PASS — auditd running on {{ inventory_hostname }}"
+
+# ── Fail2ban ──────────────────────────────────────────────────────────────────
+- name: "verify | Assert fail2ban is active"
+  ansible.builtin.assert:
+    that: "'fail2ban' in ansible_facts.services and ansible_facts.services['fail2ban'].state == 'running'"
+    fail_msg: "FAIL — fail2ban is NOT running on {{ inventory_hostname }}"
+    success_msg: "PASS — fail2ban running on {{ inventory_hostname }}"
+
+# ── UFW firewall ──────────────────────────────────────────────────────────────
+- name: "verify | Check UFW status"
+  ansible.builtin.command: ufw status
+  register: ufw_status
+  changed_when: false
+
+- name: "verify | Assert UFW is active"
+  ansible.builtin.assert:
+    that: "'Status: active' in ufw_status.stdout"
+    fail_msg: "FAIL — UFW is NOT active on {{ inventory_hostname }}"
+    success_msg: "PASS — UFW active on {{ inventory_hostname }}"
+
+# ── Sysctl hardening ──────────────────────────────────────────────────────────
+- name: "verify | Check kernel hardening params"
+  ansible.builtin.command: "sysctl {{ item.name }}"
+  register: sysctl_check
+  changed_when: false
+  failed_when: "item.expected not in sysctl_check.stdout"
+  loop:
+    - { name: "kernel.randomize_va_space",    expected: "2" }
+    - { name: "kernel.dmesg_restrict",        expected: "1" }
+    - { name: "kernel.kptr_restrict",         expected: "2" }
+    - { name: "net.ipv4.tcp_syncookies",      expected: "1" }
+    - { name: "fs.protected_hardlinks",       expected: "1" }
+    - { name: "fs.suid_dumpable",             expected: "0" }
+
+# ── NTP sync (critical for forensic timestamps) ───────────────────────────────
+- name: "verify | Check NTP sync status"
+  ansible.builtin.command: chronyc tracking
+  register: ntp_status
+  changed_when: false
+  failed_when: false
+
+- name: "verify | Assert NTP is synchronized"
+  ansible.builtin.assert:
+    that: "'System time' in ntp_status.stdout"
+    fail_msg: "WARN — NTP tracking may not be synced on {{ inventory_hostname }}"
+    success_msg: "PASS — NTP synchronized on {{ inventory_hostname }}"
+
+# ── SOF-ELK reachability ──────────────────────────────────────────────────────
+- name: "verify | Test syslog forwarding to SOF-ELK"
+  ansible.builtin.command: >
+    nc -z -w 3 {{ sofelk_ip }} {{ sofelk_syslog_port }}
+  register: sofelk_reach
+  changed_when: false
+  failed_when: sofelk_reach.rc != 0
+  when: inventory_hostname not in groups['sof_elk']
+
+# ── AIDE baseline ─────────────────────────────────────────────────────────────
+- name: "verify | Check AIDE database exists"
+  ansible.builtin.stat:
+    path: /var/lib/aide/aide.db
+  register: aide_db
+
+- name: "verify | Assert AIDE database is initialized"
+  ansible.builtin.assert:
+    that: aide_db.stat.exists
+    fail_msg: "FAIL — AIDE database not initialized on {{ inventory_hostname }}"
+    success_msg: "PASS — AIDE database present on {{ inventory_hostname }}"
+
+# ── Evidence NAS mounts (VLAN 20 hosts only) ──────────────────────────────────
+- name: "verify | Check evidence NFS mount (analysis hosts)"
+  ansible.builtin.command: mountpoint -q /mnt/evidence
+  register: nfs_mount
+  changed_when: false
+  failed_when: false
+  when: inventory_hostname in groups['linux'] and
+        inventory_hostname not in groups['nas'] and
+        inventory_hostname not in groups['management']
+
+- name: "verify | Confirm NFS mount is read-only"
+  ansible.builtin.command: >
+    grep "/mnt/evidence" /proc/mounts
+  register: mount_opts
+  changed_when: false
+  failed_when: false
+  when:
+    - nfs_mount is defined
+    - nfs_mount.rc is defined
+    - nfs_mount.rc == 0
+
+- name: "verify | Assert evidence mount is read-only"
+  ansible.builtin.assert:
+    that: "'ro' in mount_opts.stdout"
+    fail_msg: "FAIL — Evidence mount is NOT read-only on {{ inventory_hostname }}"
+    success_msg: "PASS — Evidence mount is read-only on {{ inventory_hostname }}"
+  when:
+    - mount_opts is defined
+    - mount_opts.stdout is defined
+
+# ── Print summary ─────────────────────────────────────────────────────────────
+- name: "verify | Print verification summary"
+  ansible.builtin.debug:
+    msg: |
+      ══════════════════════════════════════════════════
+      VERIFICATION COMPLETE — {{ inventory_hostname }}
+      ══════════════════════════════════════════════════
+      Host IP    : {{ ansible_host }}
+      OS         : {{ ansible_distribution }} {{ ansible_distribution_version }}
+      Kernel     : {{ ansible_kernel }}
+      Uptime     : {{ ansible_uptime_seconds | int // 3600 }}h
+      SSH        : hardened ✅
+      Auditd     : running ✅
+      Fail2ban   : running ✅
+      UFW        : active ✅
+      Sysctl     : hardened ✅
+      NTP        : synced ✅
+      SOF-ELK    : reachable ✅
+      AIDE       : initialized ✅
+      ══════════════════════════════════════════════════

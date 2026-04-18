@@ -1,0 +1,66 @@
+name: Tool / Feature Request
+description: Suggest a new tool, role, hunt, workflow, or improvement
+title: "[REQUEST] "
+labels: ["enhancement"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before submitting, please confirm:
+        - The tool is **100% open source** (no paid tiers required for core functionality)
+        - It does not duplicate an existing tool already in the lab
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - New Ansible role / VM
+        - New Velociraptor VQL hunt
+        - New Sigma detection rule
+        - New YARA rule
+        - New workflow / SOP
+        - Documentation improvement
+        - CI / automation improvement
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: tool_name
+    attributes:
+      label: Tool or feature name
+    validations:
+      required: true
+
+  - type: input
+    id: license
+    attributes:
+      label: License (tools only)
+      placeholder: MIT / Apache 2.0 / GPL / AGPL
+    validations:
+      required: false
+
+  - type: input
+    id: repo
+    attributes:
+      label: Repository or reference URL
+    validations:
+      required: false
+
+  - type: textarea
+    id: justification
+    attributes:
+      label: Why does this belong in the lab?
+      description: What gap does it fill? Which scope area (DFIR / malware / hunting / crypto / mobile / cloud)?
+    validations:
+      required: true
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Suggested implementation
+      description: How should it be integrated? New VM? Added to existing role?
+    validations:
+      required: false

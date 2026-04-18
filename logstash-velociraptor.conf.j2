@@ -1,0 +1,49 @@
+# =============================================================================
+# Logstash — Velociraptor telemetry pipeline
+# Ingests hunt results, artifact collections, and client telemetry
+# =============================================================================
+
+filter {
+  if [log_type] == "velociraptor" or "velociraptor" in [tags] {
+
+    # Parse Velociraptor JSON log format
+    json {
+      source => "message"
+      target => "velo"
+    }
+
+    # Normalize timestamp from Velociraptor epoch
+    date {
+      match    => ["[velo][Timestamp]", "UNIX"]
+      target   => "@timestamp"
+      timezone => "UTC"
+    }
+
+    mutate {
+      add_field => {
+        "source_tool" => "velociraptor"
+        "vlan"        => "analysis"
+      }
+      rename => {
+        "[velo][ClientId]"   => "client_id"
+        "[velo][FlowId]"     => "flow_id"
+        "[velo][Fqdn]"       => "client_fqdn"
+        "[velo][Artifact]"   => "artifact_name"
+      }
+    }
+
+    # Tag high-value artifact collections for analyst alerting
+    if [artifact_name] =~ /^Windows\.(System\.(Pslist|Network)|Persistence\.|Detection\.)/ {
+      mutate { add_tag => ["high-value-artifact"] }
+    }
+  }
+}
+
+output {
+  if [log_type] == "velociraptor" or "velociraptor" in [tags] {
+    elasticsearch {
+      hosts => ["localhost:{{ sofelk_es_port }}"]
+      index => "{{ sofelk_index_prefix }}-velociraptor-%{+YYYY.MM.dd}"
+    }
+  }
+}

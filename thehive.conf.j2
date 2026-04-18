@@ -1,0 +1,73 @@
+# =============================================================================
+# TheHive 4 — application.conf
+# Managed by Ansible — DO NOT edit manually
+# =============================================================================
+
+play.http.secret.key = "{{ thehive_secret_key }}"
+
+# ── Database backend — Cassandra ──────────────────────────────────────────────
+db.janusgraph {
+  storage {
+    backend = cql
+    hostname = ["cassandra"]
+    cql {
+      cluster-name = ecrime
+      keyspace = thehive
+    }
+  }
+  index.search {
+    backend = elasticsearch
+    hostname = ["elasticsearch"]
+    index-name = thehive
+  }
+}
+
+# ── File storage ──────────────────────────────────────────────────────────────
+storage {
+  provider = localfs
+  localfs.location = /opt/thehive/data
+}
+
+# ── Cortex integration ────────────────────────────────────────────────────────
+cortex {
+  servers = [
+    {
+      name = local
+      url  = "{{ thehive_cortex_url }}"
+      auth {
+        type   = "bearer"
+        key    = "REPLACE_WITH_CORTEX_API_KEY"
+      }
+      ws.ssl.loose.acceptAnyCertificate = true
+    }
+  ]
+  refreshDelay = 5 minutes
+  maxRetryOnError = 3
+}
+
+# ── MISP integration ──────────────────────────────────────────────────────────
+misp {
+  servers = [
+    {
+      name  = local
+      url   = "{{ thehive_misp_url }}"
+      auth {
+        type = key
+        key  = "{{ vault_misp_admin_key }}"
+      }
+      ws.ssl.loose.acceptAnyCertificate = true
+      tags = ["misp-ecrime-lab"]
+    }
+  ]
+  interval = 1 hour
+}
+
+# ── Authentication ────────────────────────────────────────────────────────────
+auth {
+  providers = [
+    { name = local }
+  ]
+}
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+play.logger.includeConfigProperties = true

@@ -1,0 +1,76 @@
+name: Bug Report
+description: Report a broken role, template, or deployment issue
+title: "[BUG] "
+labels: ["bug", "triage"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report an issue.
+        Please fill in as much detail as possible.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of the lab is affected?
+      options:
+        - Terraform / VM provisioning
+        - Ansible role - common
+        - Ansible role - sift_remnux
+        - Ansible role - velociraptor
+        - Ansible role - cape_sandbox
+        - Ansible role - sof_elk
+        - Ansible role - thehive_cortex
+        - Ansible role - misp
+        - Ansible role - opencti
+        - Ansible role - zeek_suricata
+        - Ansible role - zfs_nas
+        - Ansible role - other
+        - Network / OPNsense / WireGuard
+        - Documentation
+        - CI / GitHub Actions
+        - Hunt (VQL / Sigma / YARA)
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Clear description of the problem
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Commands run, output observed
+      placeholder: |
+        1. Run `ansible-playbook -i inventory.ini site.yml --tags cape`
+        2. Task fails at ...
+        3. Error message: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Proxmox version, OS, Ansible version
+      placeholder: |
+        Proxmox VE: 8.x
+        OS: Ubuntu 22.04
+        Ansible: 2.16.x
+        Phase attempted: Phase 4
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste Ansible output, systemd journal, or terraform plan output
+      render: shell

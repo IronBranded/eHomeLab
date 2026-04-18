@@ -1,0 +1,169 @@
+---
+# =============================================================================
+# Role: android_forensics
+# Deploys ALEAPP + MVT + Andriller CE — VLAN 20 (10.0.20.50)
+# All MIT / Apache 2.0 licensed
+# =============================================================================
+
+- name: "android | Install system dependencies"
+  ansible.builtin.apt:
+    name:
+      - python3
+      - python3-pip
+      - python3-venv
+      - adb
+      - fastboot
+      - libusb-1.0-0
+      - git
+      - curl
+      - openjdk-17-jre
+      - sqlite3
+      - nfs-common
+      - libimobiledevice-utils
+    state: present
+    update_cache: true
+
+# ── Analyst user ──────────────────────────────────────────────────────────────
+- name: "android | Create analyst user"
+  ansible.builtin.user:
+    name: "{{ android_analyst_user }}"
+    shell: /bin/bash
+    groups: plugdev,sudo
+    append: true
+    create_home: true
+
+- name: "android | Add analyst to plugdev for USB ADB access"
+  ansible.builtin.user:
+    name: "{{ android_analyst_user }}"
+    groups: plugdev
+    append: true
+
+# ── Evidence NFS mount ────────────────────────────────────────────────────────
+- name: "android | Create evidence mount point"
+  ansible.builtin.file:
+    path: /mnt/evidence
+    state: directory
+    owner: "{{ android_analyst_user }}"
+    group: "{{ android_analyst_user }}"
+    mode: "0750"
+
+- name: "android | Mount evidence NAS read-only"
+  ansible.posix.mount:
+    path: /mnt/evidence
+    src: "{{ nas_ip }}:{{ nas_export_path }}"
+    fstype: nfs
+    opts: "ro,soft,intr,timeo=30,retrans=3,nfsvers=4"
+    state: mounted
+
+# ── ALEAPP ────────────────────────────────────────────────────────────────────
+- name: "android | Clone ALEAPP"
+  ansible.builtin.git:
+    repo: "https://github.com/abrignoni/ALEAPP.git"
+    dest: /opt/aleapp
+    version: main
+    depth: 1
+    force: false
+
+- name: "android | Install ALEAPP dependencies"
+  ansible.builtin.pip:
+    requirements: /opt/aleapp/requirements.txt
+    state: present
+    executable: pip3
+
+- name: "android | Create ALEAPP wrapper script"
+  ansible.builtin.copy:
+    content: |
+      #!/usr/bin/env bash
+      exec python3 /opt/aleapp/aleapp.py "$@"
+    dest: /usr/local/bin/aleapp
+    owner: root
+    group: root
+    mode: "0755"
+
+# ── MVT (Mobile Verification Toolkit) ────────────────────────────────────────
+- name: "android | Create MVT virtual environment"
+  ansible.builtin.command:
+    cmd: python3 -m venv /opt/mvt-venv
+    creates: /opt/mvt-venv/bin/activate
+
+- name: "android | Install MVT"
+  ansible.builtin.pip:
+    name:
+      - mvt
+      - libusb1
+    state: present
+    virtualenv: /opt/mvt-venv
+
+- name: "android | Create MVT wrapper script"
+  ansible.builtin.copy:
+    content: |
+      #!/usr/bin/env bash
+      exec /opt/mvt-venv/bin/mvt-android "$@"
+    dest: /usr/local/bin/mvt-android
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "android | Download MVT IOC indicators"
+  ansible.builtin.get_url:
+    url: "https://raw.githubusercontent.com/mvt-project/mvt-indicators/main/indicators.json"
+    dest: /opt/mvt-venv/indicators.json
+    mode: "0644"
+  failed_when: false
+
+# ── Andriller CE ──────────────────────────────────────────────────────────────
+- name: "android | Clone Andriller CE"
+  ansible.builtin.git:
+    repo: "https://github.com/den4uk/andriller.git"
+    dest: /opt/andriller
+    version: master
+    depth: 1
+    force: false
+
+- name: "android | Install Andriller dependencies"
+  ansible.builtin.pip:
+    requirements: /opt/andriller/requirements.txt
+    state: present
+    executable: pip3
+
+- name: "android | Create Andriller wrapper script"
+  ansible.builtin.copy:
+    content: |
+      #!/usr/bin/env bash
+      exec python3 /opt/andriller/andriller.py "$@"
+    dest: /usr/local/bin/andriller
+    owner: root
+    group: root
+    mode: "0755"
+
+# ── ADB udev rules for USB device access ────────────────────────────────────
+- name: "android | Install Android udev rules"
+  ansible.builtin.get_url:
+    url: "https://raw.githubusercontent.com/M0Rf30/android-udev-rules/master/51-android.rules"
+    dest: /etc/udev/rules.d/51-android.rules
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload udev
+
+# ── Output directories ─────────────────────────────────────────────────────────
+- name: "android | Create analysis output directory"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ android_analyst_user }}"
+    group: "{{ android_analyst_user }}"
+    mode: "0750"
+  loop:
+    - /opt/android-output
+    - /opt/android-output/aleapp
+    - /opt/android-output/mvt
+    - /opt/android-output/andriller
+
+# ── Firewall ──────────────────────────────────────────────────────────────────
+- name: "android | Allow SSH from management VLAN"
+  community.general.ufw:
+    rule: allow
+    port: "22"
+    proto: tcp
+    src: "10.0.10.0/24"

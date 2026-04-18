@@ -1,0 +1,66 @@
+// =============================================================================
+// Hunt: Lateral Movement Indicators
+// Detects common lateral movement techniques
+// MITRE ATT&CK: T1021, T1550, T1075, T1570, T1135
+// =============================================================================
+
+// ── Active Network Connections to/from known lateral movement ports ────────────
+LET NetworkLateral = SELECT Pid, Name, Family, Type,
+                            Status, Laddr.IP AS LocalIP,
+                            Laddr.Port AS LocalPort,
+                            Raddr.IP AS RemoteIP,
+                            Raddr.Port AS RemotePort,
+                            Fqdn, ClientId
+FROM Artifact.Windows.Network.NetstatEnriched()
+WHERE Raddr.Port IN (445, 135, 5985, 5986, 3389, 22, 139, 4444, 1433, 5432)
+  AND Status = "ESTABLISHED"
+  AND NOT Raddr.IP =~ "^(127\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)"
+
+// ── SMB connections — remote file shares ──────────────────────────────────────
+LET SMBConnections = SELECT ProcessName, Pid,
+                            LocalAddress, RemoteAddress, RemotePort,
+                            Fqdn, ClientId
+FROM Artifact.Windows.Network.NetstatEnriched()
+WHERE RemotePort = 445
+  AND Status = "ESTABLISHED"
+
+// ── Logon events — pass-the-hash / pass-the-ticket indicators ─────────────────
+LET SuspiciousLogons = SELECT TimeCreated, EventID, AccountName,
+                               LogonType, WorkstationName,
+                               IpAddress, AuthenticationPackage,
+                               Fqdn, ClientId
+FROM Artifact.Windows.EventLogs.EvtxHunter(
+    EvtxGlob="C:\\Windows\\System32\\winevt\\Logs\\Security.evtx",
+    IdFilter=[4624, 4625, 4648]
+)
+WHERE LogonType IN ("3", "9", "10")
+  AND (AuthenticationPackage =~ "NTLM"
+       OR IpAddress != "-")
+
+// ── PsExec / remote execution artifacts ───────────────────────────────────────
+LET RemoteExec = SELECT Key.FullPath AS RegPath,
+                        Name, Data.value AS BinaryPath,
+                        Key.LastWriteTime,
+                        Fqdn, ClientId
+FROM Artifact.Windows.Registry.NTUser(
+    KeyGlob="HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\PSEXE*"
+)
+
+// ── WMI process creation (remote WMI lateral movement) ────────────────────────
+LET WMIExec = SELECT TimeCreated, EventID,
+                      Computer, Message,
+                      Fqdn, ClientId
+FROM Artifact.Windows.EventLogs.EvtxHunter(
+    EvtxGlob="C:\\Windows\\System32\\winevt\\Logs\\Microsoft-Windows-WMI-Activity-Operational.evtx",
+    IdFilter=[5857, 5858, 5860, 5861]
+)
+
+SELECT *, "NetworkLateral" AS Technique FROM NetworkLateral
+UNION ALL
+SELECT *, "SMBConnection" AS Technique FROM SMBConnections
+UNION ALL
+SELECT *, "SuspiciousLogon" AS Technique FROM SuspiciousLogons
+UNION ALL
+SELECT *, "RemoteExecution" AS Technique FROM RemoteExec
+UNION ALL
+SELECT *, "WMIExecution" AS Technique FROM WMIExec

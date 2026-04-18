@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# =============================================================================
+# zfs-snapshot — Automated forensic snapshot management
+# Managed by Ansible — DO NOT edit manually
+# Usage: zfs-snapshot <frequency> <keep_count>
+# Example: zfs-snapshot hourly 24
+# =============================================================================
+
+set -euo pipefail
+
+FREQUENCY="${1:?Usage: zfs-snapshot <frequency> <keep_count>}"
+KEEP="${2:?Usage: zfs-snapshot <frequency> <keep_count>}"
+POOL="evidence"
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+SNAP_NAME="${POOL}@${FREQUENCY}-${TIMESTAMP}"
+
+log() { logger -t "zfs-snapshot" "$*"; echo "$*"; }
+
+# ── Create recursive snapshot of all datasets ─────────────────────────────────
+log "Creating snapshot: ${SNAP_NAME}"
+zfs snapshot -r "${SNAP_NAME}"
+log "Snapshot created: ${SNAP_NAME}"
+
+# ── Prune old snapshots beyond retention count ────────────────────────────────
+log "Pruning old ${FREQUENCY} snapshots — keeping last ${KEEP}"
+
+zfs list -H -o name -t snapshot \
+  | grep "@${FREQUENCY}-" \
+  | sort \
+  | head -n -"${KEEP}" \
+  | while read -r snap; do
+      log "Destroying old snapshot: ${snap}"
+      zfs destroy "${snap}"
+    done
+
+log "Snapshot rotation complete for frequency: ${FREQUENCY}"
+
+# ── Log snapshot inventory to audit trail ────────────────────────────────────
+zfs list -H -o name -t snapshot | grep "^${POOL}@${FREQUENCY}" \
+  | logger -t "zfs-snapshot-inventory"
